@@ -52,7 +52,7 @@ public:
         return result;
     }
 
-    complex_t<T> operator *=(const T & scalar){
+    complex_t<T> & operator *=(const T & scalar){
         this->re() = this->re() * scalar;
         this->im() = this->im() * scalar;
         return *this;
@@ -60,6 +60,17 @@ public:
     complex_t<T> operator *(const T & scalar){
         complex_t<T> result(this->re(), this->im());
         result *= scalar;
+        return result;
+    }
+
+    complex_t<T> & operator /=(const T & scalar){
+        this->re() = this->re() / scalar;
+        this->im() = this->im() / scalar;
+        return *this;
+    }
+    complex_t<T>  operator /(const T & scalar){
+        complex_t<T> result(this->re(), this->im());
+        result /= scalar;
         return result;
     }
 
