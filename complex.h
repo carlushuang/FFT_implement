@@ -63,6 +63,28 @@ public:
         return result;
     }
 
+    complex_t<T> & operator /=(const complex_t<T>& rhs){
+        /*
+         *   a+bi   a+bi   c-di   ac+bd + i(bc-ad)
+         *   ---- = ---- * ---- = ----------------
+         *   c+di   c+di   c-di      c^2 + d^2
+         */
+        T a = this->re();
+        T b = this->im();
+        T c = rhs.re();
+        T d = rhs.im();
+
+        T l = c*c + d*d;
+        this->re() = (a*c+b*d)/l;
+        this->im() = (b*c-a*d)/l;
+        return *this;
+    }
+    complex_t<T> operator /(const complex_t<T>& rhs){
+        complex_t<T> result(this->re(), this->im());
+        result /= rhs;
+        return result;
+    }
+
     complex_t<T> & operator /=(const T & scalar){
         this->re() = this->re() / scalar;
         this->im() = this->im() / scalar;
