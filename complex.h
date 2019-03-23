@@ -6,6 +6,7 @@
 
 #ifndef C_PI
 #define C_PI  3.14159265358979323846
+#define C_2PI 6.28318530717958647692
 #endif
 
 template<typename T>
@@ -146,7 +147,7 @@ namespace std{
 
     template<typename T>
     complex_t<T> conj(const complex_t<T> & c){
-        complex_t<T> result(c->re(), -1*c->im());
+        complex_t<T> result(c.re(), ((T)-1) * c.im());
         return result;
     }
 
