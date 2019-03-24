@@ -333,10 +333,13 @@ void convolve_naive(const std::vector<T> & data, const std::vector<T> & filter, 
 *    indeed, for DFT, time reverse is not equal to conj in freq. a tiwddle factor is needed
 *       f[n] -> F[k]
 *       f[N-n-1] -> conj(F[k]) * e^(i*2PI*k/N)
+*
+*    in fact, if use time reverse plus shift in DFT, the twiddle factor is not needed.
+*    [0,1,2,3,4] --- reverse ---> [4,3,2,1,0] --- shr ---> [0,4,3,2,1]
 */
 
-#define USE_CORR_CONJ
-//#define USE_CORR_WARP_SHIFT
+//#define USE_CORR_CONJ
+#define USE_CORR_WARP_SHIFT
 template<typename T>
 void convolve_fft(const std::vector<T> & data, const std::vector<T> & filter, std::vector<T> &  dst, bool correlation = false){
     size_t dst_len = data.size()+filter.size()-1;
@@ -387,17 +390,10 @@ void convolve_fft(const std::vector<T> & data, const std::vector<T> & filter, st
             t_filter.insert(t_filter.begin(),  complex_t<T>((T)0, (T)0));
         }
 
-        for(const auto & it : t_filter)
-            std::cout<<it<<",";
-        std::cout<<"\n";
-
         // wrap around
         // TODO: better solution
         // simple rotation to the right
         std::rotate(t_filter.rbegin(), t_filter.rbegin() + 1, t_filter.rend());
-        for(const auto & it : t_filter)
-            std::cout<<it<<",";
-        std::cout<<"\n";
     }
 #else
     if(correlation){
@@ -422,7 +418,7 @@ void convolve_fft(const std::vector<T> & data, const std::vector<T> & filter, st
 #if defined(USE_CORR_CONJ)
             f_data[i] = f_data[i] * (twiddle_for_conj[i] * std::conj(f_filter[i]));  // element-wise multiply
 #elif defined(USE_CORR_WARP_SHIFT)
-            f_data[i] = f_data[i] * f_filter[i];  // element-wise multiply
+            f_data[i] = f_data[i] * std::conj(f_filter[i]);  // element-wise multiply
 #else
             f_data[i] = f_data[i] * f_filter[i];  // element-wise multiply
 #endif
