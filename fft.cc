@@ -58,29 +58,37 @@ int valid_vector(const std::vector<T> & lhs, const std::vector<T> & rhs, T delta
 }
 
 template<typename T>
-void rand_vec(std::vector<complex_t<T>> & seq, size_t len){
+void rand_vec(std::vector<complex_t<T>> & seq){
     static std::random_device rd;   // seed
 
     static std::mt19937 mt(rd());
     static std::uniform_real_distribution<T> dist(-2.0, 2.0);
 
-    seq.resize(len);
+    //seq.resize(len);
     size_t i;
     for(i=0;i<seq.size();i++){
         seq[i] = complex_t<T>(dist(mt), dist(mt));
     }
 }
 template<typename T>
-void rand_vec(std::vector<T> & seq, size_t len){
+void rand_vec(std::vector<T> & seq){
     static std::random_device rd;   // seed
 
     static std::mt19937 mt(rd());
     static std::uniform_real_distribution<T> dist(-2.0, 2.0);
 
-    seq.resize(len);
+    //seq.resize(len);
     size_t i;
     for(i=0;i<seq.size();i++){
         seq[i] =  dist(mt);
+    }
+}
+
+template<typename T>
+void copy_vec(std::vector<T> & src, std::vector<T> & dst){
+    dst.resize(src.size());
+    for(size_t i=0;i<src.size();i++){
+        dst[i] = src[i];
     }
 }
 
@@ -178,6 +186,17 @@ void bit_reverse_radix2(std::vector<ELEMENT_T> & vec){
             std::swap(vec[i], vec[ir]);
         }
     }
+}
+
+int bit_reverse_nbits(int v, int nbits){
+    int r = 0;
+    int d = nbits-1;
+    for(int i=0;i<nbits;i++){
+        if(v & (1<<i))
+            r |= 1<<d;
+        d--;
+    }
+    return r;
 }
 
 template<typename ELEMENT_T>
@@ -302,6 +321,82 @@ void ifft_cooley_tukey(complex_t<T> * seq, size_t length){
     // inverse only, need devide
     for(itr = 0; itr < length; itr++)
         seq[itr] /= (T)length;
+}
+
+template<typename T>
+void fft_cooley_tukey_r(complex_t<T> * seq, size_t length){
+    if(length == 1)
+        return;
+    assert( ( (length & (length - 1)) == 0 ) && "current only length power of 2");
+
+    auto omega_func = [](size_t total_n, size_t k){
+        // e^(  -2PI*k*n/N * i), here n is iter through each 
+        T r = (T)1;
+        T theta = -1*C_2PI*k / total_n;
+        return std::polar2<T>(r, theta);
+    };
+
+    /*
+    * length
+    *   2    ->  0, 1
+    *   4    ->  0, 2, 1, 3
+    *   8    ->  0, 4, 2, 6, 1, 5, 3, 7
+    *  16    ->  0, 8, 4,12, 2,10, 6,14, 1, 9, 5,13, 3,11, 7,15
+    */
+   for(size_t itr = 2; itr<=length; itr<<=1){
+        size_t stride = length/itr;
+        size_t groups = itr/2;
+        size_t group_len = stride*2;
+
+        std::vector<complex_t<T>> omega_list;   // pre-compute omega, and index to it later
+        omega_list.resize(itr/2);
+        for(size_t i = 0; i < itr/2 ; i ++){
+            omega_list[i] = omega_func( itr, i);
+        }
+        for(size_t g=0;g<groups;g++){
+            size_t k = bit_reverse_nbits(g, std::log2(groups));
+
+            complex_t<T> & omega = omega_list[k];
+            for(size_t s=0;s<stride;s++){
+                //printf("W%d_%d(%d,%d-%d) ", itr, k, g, g*group_len+s, g*group_len+s+stride);
+                complex_t<T> & a = seq[g*group_len+s];
+                complex_t<T> & b = seq[g*group_len+s+stride];
+
+#define BUFL2(a,b,w) \
+    do{             \
+        complex_t<T> temp = a;  \
+        a = a + b*w;            \
+        b = temp-b*w;           \
+    }while(0)
+
+                BUFL2(a, b, omega);
+
+
+            }
+        }
+        //printf("\n");
+    }
+
+    // no forget last bit reverse!!
+    bit_reverse_radix2(seq, length);
+}
+
+template<typename T>
+void fft_r2c(T* t_seq, complex_t<T> * f_seq, size_t length){
+    if(length == 1)
+        return;
+    assert( ( (length & (length - 1)) == 0 ) && "current only length power of 2");
+
+    // http://processors.wiki.ti.com/index.php/Efficient_FFT_Computation_of_Real_Input
+    // no need to extend real to complex
+
+    auto omega_func = [](size_t total_n, size_t k){
+        // e^( -1 * 2PI*k*n/N * i), here n is iter through each 
+        T r = (T)1;
+        T theta = -1 * C_2PI*k / total_n;
+        return std::polar2<T>(r, theta);
+    };
+
 }
 
 template<typename T>
@@ -681,8 +776,10 @@ void test_convolve_fft_1d(){
         filter.push_back(i);
     }
 #endif
-    rand_vec(data, data_len);
-    rand_vec(filter, filter_len);
+    data.resize(data_len);
+    filter.resize(filter_len);
+    rand_vec(data);
+    rand_vec(filter);
 
     test_convolve_func(data, filter, true);
     test_convolve_func(data, filter, false);
@@ -753,31 +850,35 @@ void test_convolve_fft_2d(){
 int main(){
     test_convolve_fft_1d();
     test_convolve_fft_2d();
-#if 0
+#if 1
     size_t size;
     //size_t total_size = 1<<13;
-    size_t total_size = 8;
+    size_t total_size = 64;
     for(size = 2; size<=total_size; size *= 2){
         std::vector<complex_t<d_type>> t_seq;
-        rand_vec(t_seq, size-1);
+        std::vector<complex_t<d_type>> f_seq;
+        std::vector<complex_t<d_type>> t_seq_r;
 
-        std::vector<complex_t<d_type>> f_seq_1;
-        std::vector<complex_t<d_type>> f_seq_2;
-        std::vector<complex_t<d_type>> t_seq_1;
-        std::vector<complex_t<d_type>> t_seq_2;
-        fft_naive(t_seq, f_seq_1,size);
-        ifft_naive(f_seq_1, t_seq_1,size);
-        fft_cooley_tukey(t_seq, f_seq_2,size);
-        ifft_cooley_tukey(f_seq_2, t_seq_2,size);
+        std::vector<complex_t<d_type>> seq_fwd;
+        std::vector<complex_t<d_type>> seq_bwd;
+        t_seq.resize(size);
+        rand_vec(t_seq);
+        copy_vec(t_seq,seq_fwd);
 
-        int err_cnt = valid_vector(f_seq_1, f_seq_2);
-        int ierr_cnt = valid_vector(t_seq_1, t_seq_2);
+        fft_naive(t_seq, f_seq, size);
+        ifft_naive(f_seq, t_seq_r,size);
+
+        //fft_cooley_tukey(seq_fwd.data() ,size);
+        fft_cooley_tukey_r(seq_fwd.data() ,size);
+        int err_cnt = valid_vector(f_seq, seq_fwd);
+
+        copy_vec(f_seq,seq_bwd);
+        ifft_cooley_tukey(seq_bwd.data(), size);
+        int ierr_cnt = valid_vector(t_seq_r, seq_bwd);
         std::cout<<"length:"<<size<<", fwd valid:"<< ( (err_cnt==0)?"y":"n" ) <<
             ", bwd valid:"<<( (ierr_cnt==0)?"y":"n" ) <<std::endl;
-        dump_vector(t_seq);
-
-        dump_vector(t_seq_1);
-        dump_vector(t_seq_2);
+        //dump_vector(t_seq);
+        //dump_vector(t_seq_r);
         std::cout<<"---------------------------------------"<<std::endl;
     }
 #endif
