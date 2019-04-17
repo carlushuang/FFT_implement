@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string.h>
+#include <functional>
 
 typedef double d_type;
 
@@ -16,6 +17,13 @@ template<typename T>
 void dump_vector(const std::vector<T> & vec){
     for(const T & elem : vec){
         std::cout<<elem<<", ";
+    }
+    std::cout<<std::endl;
+}
+template<typename T>
+void dump_vector(const T * vec, size_t len){
+    for(size_t i=0;i<len;i++){
+        std::cout<<vec[i]<<", ";
     }
     std::cout<<std::endl;
 }
@@ -324,17 +332,25 @@ void ifft_cooley_tukey(complex_t<T> * seq, size_t length){
 }
 
 template<typename T>
-void fft_cooley_tukey_r(complex_t<T> * seq, size_t length){
+void _fft_cooley_tukey_r(complex_t<T> * seq, size_t length, bool is_inverse_fft){
     if(length == 1)
         return;
     assert( ( (length & (length - 1)) == 0 ) && "current only length power of 2");
 
-    auto omega_func = [](size_t total_n, size_t k){
-        // e^(  -2PI*k*n/N * i), here n is iter through each 
-        T r = (T)1;
-        T theta = -1*C_2PI*k / total_n;
-        return std::polar2<T>(r, theta);
-    };
+    std::function<complex_t<T>(size_t,size_t)> omega_func;
+    if(is_inverse_fft){
+        omega_func = [](size_t total_n, size_t k){
+            T r = (T)1;
+            T theta = C_2PI*k / total_n;
+            return std::polar2<T>(r, theta);
+        };
+    }else{
+        omega_func = [](size_t total_n, size_t k){
+            T r = (T)1;
+            T theta = -1*C_2PI*k / total_n;
+            return std::polar2<T>(r, theta);
+        };
+    }
 
     /*
     * length
@@ -371,7 +387,6 @@ void fft_cooley_tukey_r(complex_t<T> * seq, size_t length){
 
                 BUFL2(a, b, omega);
 
-
             }
         }
         //printf("\n");
@@ -379,16 +394,46 @@ void fft_cooley_tukey_r(complex_t<T> * seq, size_t length){
 
     // no forget last bit reverse!!
     bit_reverse_radix2(seq, length);
+    if(is_inverse_fft){
+        for(size_t i=0;i<length;i++)
+            seq[i] = seq[i]/length;
+    }
 }
-
+template<typename T>
+void fft_cooley_tukey_r(complex_t<T> * seq, size_t length){
+    _fft_cooley_tukey_r(seq, length,false);
+}
+template<typename T>
+void ifft_cooley_tukey_r(complex_t<T> * seq, size_t length){
+    _fft_cooley_tukey_r(seq, length,true);
+}
+/*
+* http://processors.wiki.ti.com/index.php/Efficient_FFT_Computation_of_Real_Input
+*
+* r2c:
+* N=length
+* 1. input real g(n), len:N, form N/2 complex sequency x(n), len:N/2
+*    xr(n) = g(2*n)
+*    xi(n) = g(2*n+1)
+* 2. compute N/2 point fft, x(n)->X(k), len:N/2
+* 3. get final G(k) len:N, from X(k) len:N/2
+*    a) for first half:
+*      G(k) = X(k)A(k)+X*(N-k)B(k), k:0...N/2-1
+*                   and, let X(N) = X(0)
+*           A(k) = 0.5*(1-j*W(N,k)), k:0...N/2-1
+*           B(k) = 0.5*(1+j*W(N,k)), k:0...N/2-1
+*           W(N,k) = e^( -1 * 2PI*k/N * j)
+*    b) for second half:
+*      Gr(N/2) = Xr(0) - Xi(0),    real - imag
+*      Gi(N/2) = 0
+*      G(N-k) = G*(k), k:1...N/2-1
+*
+*/
 template<typename T>
 void fft_r2c(T* t_seq, complex_t<T> * f_seq, size_t length){
     if(length == 1)
         return;
     assert( ( (length & (length - 1)) == 0 ) && "current only length power of 2");
-
-    // http://processors.wiki.ti.com/index.php/Efficient_FFT_Computation_of_Real_Input
-    // no need to extend real to complex
 
     auto omega_func = [](size_t total_n, size_t k){
         // e^( -1 * 2PI*k*n/N * i), here n is iter through each 
@@ -397,6 +442,84 @@ void fft_r2c(T* t_seq, complex_t<T> * f_seq, size_t length){
         return std::polar2<T>(r, theta);
     };
 
+    std::vector<complex_t<T>> A;
+    std::vector<complex_t<T>> B;
+    for(size_t i=0;i<length/2;i++){
+        complex_t<T> v (0,1);
+        complex_t<T> r (1,0);
+        v*=omega_func(length,i);
+        A.push_back( (r-v)*0.5 );
+        B.push_back( (r+v)*0.5 );
+    }
+
+    std::vector<complex_t<T>> seq;
+    for(size_t i=0;i<length/2;i++){
+        seq.emplace_back(t_seq[2*i], t_seq[2*i+1]);
+    }
+    fft_cooley_tukey_r(seq.data(), length/2);
+
+    f_seq[0] = seq[0]*A[0]+std::conj(seq[0])*B[0];    // X(N/2)=X(0)
+    for(size_t i=1;i<length/2;i++){
+        f_seq[i] = seq[i] *A[i]+std::conj(seq[length/2-i])*B[i];
+        f_seq[length-i] = std::conj(f_seq[i]);
+    }
+    f_seq[length/2] = complex_t<T>( std::real(seq[0])-std::imag(seq[0]), (T)0);
+}
+
+/*
+* http://processors.wiki.ti.com/index.php/Efficient_FFT_Computation_of_Real_Input
+*
+* c2r:
+* N=length
+* 1. input G(k), len:N, form N/2 complex sequency X(k), len:N/2
+*    X(k) = G(k)A*(k) + G*(N/2-k)B*(k), k:0...N/2-1
+*           A(k) = 0.5*(1-j*W(N,k)), k:0...N/2-1
+*           B(k) = 0.5*(1+j*W(N,k)), k:0...N/2-1
+*           W(N,k) = e^( -1 * 2PI*k/N * j)
+*           A(k), B(k), same as r2c
+* 2. compute N/2 point ifft, X(k)->x(n), len:N/2
+* 3. get final real g(n) len:N, from x(n) len:N/2
+*      g(2*n)   = xr(n)
+*      g(2*n+1) = xi(n)
+*               n=0...N/2-1
+*
+*/
+template<typename T>
+void fft_c2r(complex_t<T> * f_seq, T* t_seq, size_t length){
+    if(length == 1)
+        return;
+    assert( ( (length & (length - 1)) == 0 ) && "current only length power of 2");
+
+    auto omega_func = [](size_t total_n, size_t k){
+        // e^( -1 * 2PI*k*n/N * i), here n is iter through each 
+        T r = (T)1;
+        T theta = -1 * C_2PI*k / total_n;
+        return std::polar2<T>(r, theta);
+    };
+
+    std::vector<complex_t<T>> A;
+    std::vector<complex_t<T>> B;
+    for(size_t i=0;i<length/2;i++){
+        complex_t<T> v (0,1);
+        complex_t<T> r (1,0);
+        v*=omega_func(length,i);
+        A.push_back( (r-v)*0.5 );
+        B.push_back( (r+v)*0.5 );
+    }
+
+    std::vector<complex_t<T>> seq;
+    seq.resize(length/2);
+
+    for(size_t itr = 0; itr<length/2; itr++){
+        seq[itr] = f_seq[itr]*std::conj(A[itr])+std::conj(f_seq[length/2-itr])*std::conj(B[itr]);
+    }
+
+    ifft_cooley_tukey_r(seq.data(), length/2);
+
+    for(size_t i=0;i<length/2;i++){
+        t_seq[2*i] = std::real(seq[i]);
+        t_seq[2*i+1] = std::imag(seq[i]);
+    }
 }
 
 template<typename T>
@@ -853,7 +976,7 @@ int main(){
 #if 1
     size_t size;
     //size_t total_size = 1<<13;
-    size_t total_size = 64;
+    size_t total_size = 1024;
     for(size = 2; size<=total_size; size *= 2){
         std::vector<complex_t<d_type>> t_seq;
         std::vector<complex_t<d_type>> f_seq;
@@ -873,11 +996,50 @@ int main(){
         int err_cnt = valid_vector(f_seq, seq_fwd);
 
         copy_vec(f_seq,seq_bwd);
-        ifft_cooley_tukey(seq_bwd.data(), size);
+        ifft_cooley_tukey_r(seq_bwd.data(), size);
         int ierr_cnt = valid_vector(t_seq_r, seq_bwd);
         std::cout<<"length:"<<size<<", fwd valid:"<< ( (err_cnt==0)?"y":"n" ) <<
             ", bwd valid:"<<( (ierr_cnt==0)?"y":"n" ) <<std::endl;
         //dump_vector(t_seq);
+        //dump_vector(t_seq_r);
+        std::cout<<"---------------------------------------"<<std::endl;
+    }
+    for(size = 2; size<=total_size; size *= 2){
+        std::vector<complex_t<d_type>> t_seq;
+        std::vector<complex_t<d_type>> f_seq;
+        std::vector<complex_t<d_type>> t_seq_r;
+
+        std::vector<d_type> seq_fwd_real;
+        std::vector<complex_t<d_type>> seq_fwd;
+        std::vector<complex_t<d_type>> seq_bwd;
+        std::vector<d_type> seq_bwd_real;
+        seq_fwd_real.resize(size);
+        rand_vec(seq_fwd_real);
+        for(size_t ii=0;ii<size;ii++){
+            t_seq.push_back(complex_t<d_type>(seq_fwd_real[ii],(d_type)0));
+        }
+
+        fft_naive(t_seq, f_seq, size);
+        ifft_naive(f_seq, t_seq_r,size);
+
+        //fft_cooley_tukey(seq_fwd.data() ,size);
+        seq_fwd.resize(size);
+        fft_r2c(seq_fwd_real.data(), seq_fwd.data() ,size);
+        int err_cnt = valid_vector(f_seq, seq_fwd);
+
+        //copy_vec(f_seq,seq_bwd);
+        //ifft_cooley_tukey(seq_bwd.data(), size);
+        seq_bwd_real.resize(size);
+        fft_c2r(f_seq.data(), seq_bwd_real.data(), size);
+        for(size_t ii=0;ii<size;ii++){
+            seq_bwd.push_back(complex_t<d_type>(seq_bwd_real[ii],(d_type)0));
+        }
+        int ierr_cnt = valid_vector(t_seq_r, seq_bwd);
+        std::cout<<"length:"<<size<<", r2c fwd valid:"<< ( (err_cnt==0)?"y":"n" ) <<
+            ", c2r bwd valid:"<<( (ierr_cnt==0)?"y":"n" ) <<std::endl;
+        //dump_vector(t_seq);
+        //dump_vector(f_seq);
+        //dump_vector(seq_fwd);
         //dump_vector(t_seq_r);
         std::cout<<"---------------------------------------"<<std::endl;
     }
