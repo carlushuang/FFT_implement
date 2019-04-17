@@ -428,6 +428,23 @@ void ifft_cooley_tukey_r(complex_t<T> * seq, size_t length){
 *      Gi(N/2) = 0
 *      G(N-k) = G*(k), k:1...N/2-1
 *
+*
+* step 3 can re-write as follow:
+*   Ar(k) = 0.5*(1.0-sin(2*PI*k/N))
+*   Ai(k) = 0.5*(-1*cos(2*PI*k/N))
+*   Br(k) = 0.5*(1+sin(2*PI*k/N))
+*   Bi(k) = 0.5*(1*cos(2*PI*k/N))
+*               k=0...N/2-1
+*
+*   a) for first half:
+*   Gr(k) = Xr(k)Ar(k) – Xi(k)Ai(k) + Xr(N/2–k)Br(k) + Xi(N/2–k)Bi(k)
+*   Gi(k) = Xi(k)Ar(k) + Xr(k)Ai(k) + Xr(N/2–k)Bi(k) – Xi(N/2–k)Br(k)
+*                   for k = 0...N/2–1 and X(N/2) = X(0)
+*
+*   Gr(N/2) = Xr(0) – Xi(0)
+*   Gi(N/2) = 0
+*   Gr(N–k) = Gr(k), for k = 1...N/2–1
+*   Gi(N–k) = –Gi(k)
 */
 template<typename T>
 void fft_r2c(T* t_seq, complex_t<T> * f_seq, size_t length){
@@ -483,6 +500,18 @@ void fft_r2c(T* t_seq, complex_t<T> * f_seq, size_t length){
 *      g(2*n+1) = xi(n)
 *               n=0...N/2-1
 *
+* step 1 can re-write:
+*   Xr(k) = Gr(k)IAr(k) – Gi(k)IAi(k) + Gr(N/2–k)IBr(k) + Gi(N/2–k)IBi(k)
+*   Xi(k) = Gi(k)IAr(k) + Gr(k)IAi(k) + Gr(N/2–k)IBi(k) – Gi(N/2–k)IBr(k)
+*                for k = 0...N/2–1
+*
+*   IA : complex conjugate of A
+*   IB : complex conjugate of B
+*   IAr(k) = 0.5*(1.0-sin(2*PI*k/N))
+*   IAi(k) = 0.5*(1*cos(2*PI*k/N))
+*   IBr(k) = 0.5*(1+sin(2*PI*k/N))
+*   IBi(k) = 0.5*(-1*cos(2*PI*k/N))
+*               k=0...N/2-1
 */
 template<typename T>
 void fft_c2r(complex_t<T> * f_seq, T* t_seq, size_t length){
