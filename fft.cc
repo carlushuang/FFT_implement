@@ -621,26 +621,8 @@ void ifft_2d(complex_t<T>* seq, size_t seq_w, size_t seq_h)
 
 template<typename T>
 void fft2d_r2c(T* t_seq, complex_t<T> * f_seq, size_t seq_w, size_t seq_h, bool half_mode=false){
-    size_t i,j;
-    for(i=0;i<seq_h;i++){
-        fft_cooley_tukey(seq+i*seq_w, seq_w);
-    }
+   
 
-    std::vector<complex_t<T>> s2;
-    // transpose
-    for(i=0;i<seq_w;i++){
-        for(j=0;j<seq_h;j++){
-            s2.push_back(seq[j*seq_w+i]);
-        }
-    }
-    for(i=0;i<seq_w;i++){
-        fft_cooley_tukey(s2.data()+i*seq_h, seq_h);
-    }
-    for(i=0;i<seq_w;i++){
-        for(j=0;j<seq_h;j++){
-            seq[j*seq_w+i] = s2[i*seq_h+j];
-        }
-    }
 }
 template<typename T>
 void ifft2d_c2r(complex_t<T> * f_seq, T* t_seq, size_t seq_w, size_t seq_h, bool half_mode=false){
