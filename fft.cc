@@ -11,6 +11,13 @@
 #include <string.h>
 #include <functional>
 
+#define BUFL2(a,b,w)                \
+    do{                             \
+        complex_t<T> temp = (a);    \
+        (a) = (a) + (b)*(w);        \
+        (b) = temp-(b)*(w);         \
+    }while(0)
+
 typedef double d_type;
 
 template<typename T>
@@ -377,16 +384,7 @@ void _fft_cooley_tukey_r(complex_t<T> * seq, size_t length, bool is_inverse_fft)
                 //printf("W%d_%d(%d,%d-%d) ", itr, k, g, g*group_len+s, g*group_len+s+stride);
                 complex_t<T> & a = seq[g*group_len+s];
                 complex_t<T> & b = seq[g*group_len+s+stride];
-
-#define BUFL2(a,b,w) \
-    do{             \
-        complex_t<T> temp = a;  \
-        a = a + b*w;            \
-        b = temp-b*w;           \
-    }while(0)
-
                 BUFL2(a, b, omega);
-
             }
         }
         //printf("\n");
@@ -454,7 +452,7 @@ void ifft_cooley_tukey_r(complex_t<T> * seq, size_t length){
 *
 */
 template<typename T>
-void fft_r2c(T* t_seq, complex_t<T> * f_seq, size_t length, bool half_mode=false){
+void fft_r2c(const T* t_seq, complex_t<T> * f_seq, size_t length, bool half_mode=false){
     // if half_mode is true, t_seq only need length/2+1. the second half is ignored
     if(length == 1)
         return;
@@ -531,7 +529,7 @@ void fft_r2c(T* t_seq, complex_t<T> * f_seq, size_t length, bool half_mode=false
 *                for k = 0...N/2–1
 */
 template<typename T>
-void ifft_c2r(complex_t<T> * f_seq, T* t_seq, size_t length, bool half_mode=false){
+void ifft_c2r(const complex_t<T> * f_seq, T* t_seq, size_t length, bool half_mode=false){
     // f_seq is always only need first half, length/2+1, so half_mode is not needed
     (void)half_mode;
     if(length == 1)
@@ -620,12 +618,119 @@ void ifft_2d(complex_t<T>* seq, size_t seq_w, size_t seq_h)
 }
 
 template<typename T>
-void fft2d_r2c(T* t_seq, complex_t<T> * f_seq, size_t seq_w, size_t seq_h, bool half_mode=false){
-   
+void fft2d_r2c(const T* t_seq, complex_t<T> * f_seq, size_t seq_w, size_t seq_h, bool half_mode=false){
+    size_t v_len = half_mode?(seq_h/2+1):seq_h; // vertical fft, then horizontal 
+#if 0
+    // vertical
+    for(size_t w=0;w<seq_w;w++){
+        T v[seq_h];
+        complex_t<T> f_v[v_len];
+        for(size_t h=0;h<seq_h;h++){
+            v[h] = t_seq[h*seq_w+w];
+        }
+        fft_r2c(v, f_v, seq_h, half_mode);
 
+        for(size_t h=0;h<v_len;h++){
+            f_seq[h*seq_w+w] = f_v[h];
+        }
+    }
+    // horizontal
+    for(size_t h=0;h<v_len;h++){
+        fft_cooley_tukey_r(f_seq+h*seq_w, seq_w);
+    }
+#endif
+    // vertical
+    for(size_t w=0;w<seq_w;w++){
+        T v[seq_h];
+        complex_t<T> f_v[v_len];
+        for(size_t h=0;h<seq_h;h++){
+            v[h] = t_seq[h*seq_w+w];
+        }
+        fft_r2c(v, f_v, seq_h, half_mode);
+
+        for(size_t h=0;h<v_len;h++){
+            f_seq[h*seq_w+w] = f_v[h];
+        }
+    }
+
+    auto omega_func = [](size_t total_n, size_t k){
+        return std::polar2<T>((T)1, (-1*C_2PI*k/total_n));
+    };
+    std::vector<complex_t<T>> omega;
+    for(size_t w=0;w<seq_w/2;w++){
+        omega.push_back(omega_func(seq_w, w));
+    }
+    // horizontal
+    // this method may be usefull when half_mode=true, and do 2 seq_2/2 h_fft
+    for(size_t h=0;h<v_len;h++){
+        // TODO: fill odd/even in above vertical fft
+        std::vector<complex_t<T>> f_even;
+        std::vector<complex_t<T>> f_odd;
+        for(size_t w=0;w<seq_w/2;w++){
+            f_even.push_back(f_seq[h*seq_w+2*w]);
+            f_odd.push_back(f_seq[h*seq_w+2*w+1]);
+        }
+        fft_cooley_tukey_r(f_even.data(), seq_w/2);
+        fft_cooley_tukey_r(f_odd.data(), seq_w/2);
+
+        for(size_t w=0;w<seq_w/2;w++){
+            f_seq[h*seq_w+w] = f_even[w]+f_odd[w]*omega[w];
+            f_seq[h*seq_w+w+seq_w/2] = f_even[w]-f_odd[w]*omega[w];
+        }
+    }
 }
+
 template<typename T>
-void ifft2d_c2r(complex_t<T> * f_seq, T* t_seq, size_t seq_w, size_t seq_h, bool half_mode=false){
+void ifft2d_c2r(const complex_t<T> * f_seq, T* t_seq, size_t seq_w, size_t seq_h, bool half_mode=false){
+    size_t v_len = half_mode?(seq_h/2+1):seq_h;
+
+    std::vector<complex_t<T>> _seq;
+    _seq.resize(seq_w*v_len);
+
+    
+    auto omega_func = [](size_t total_n, size_t k){
+        return std::polar2<T>((T)1, (C_2PI*k/total_n));
+    };
+    std::vector<complex_t<T>> omega;
+    for(size_t w=0;w<seq_w/2;w++){
+        omega.push_back(omega_func(seq_w, w));
+    }
+
+    // horizontal
+    for(size_t h=0;h<v_len;h++){
+#if 0
+        std::copy(f_seq+h*seq_w, f_seq+h*seq_w+seq_w, _seq.data()+h*seq_w);
+        ifft_cooley_tukey_r(_seq.data()+h*seq_w, seq_w);
+#endif
+        std::vector<complex_t<T>> f_even;
+        std::vector<complex_t<T>> f_odd;
+        for(size_t w=0;w<seq_w/2;w++){
+            f_even.push_back(f_seq[h*seq_w+2*w]);
+            f_odd.push_back(f_seq[h*seq_w+2*w+1]);
+        }
+
+        ifft_cooley_tukey_r(f_even.data(), seq_w/2);
+        ifft_cooley_tukey_r(f_odd.data(), seq_w/2);
+
+        for(size_t w=0;w<seq_w/2;w++){
+            _seq[h*seq_w+w] = (f_even[w]+f_odd[w]*omega[w])/2;      // NOTICE, need divide 2
+            _seq[h*seq_w+w+seq_w/2] = (f_even[w]-f_odd[w]*omega[w])/2;
+        }
+    }
+
+    // vertical
+    for(size_t w=0;w<seq_w;w++){
+        complex_t<T> v[v_len];
+        T t_v[seq_h];
+        for(size_t h=0;h<v_len;h++){
+            v[h] = _seq[h*seq_w+w];
+        }
+        ifft_c2r(v, t_v, seq_h, half_mode);
+        
+        for(size_t h=0;h<seq_h;h++){
+            t_seq[h*seq_w+w] = t_v[h];
+        }
+    }
 }
 template<typename T>
 void convolve_naive(const std::vector<T> & data, const std::vector<T> & filter, std::vector<T> &  dst, bool correlation = false){
@@ -865,12 +970,16 @@ void convolve2d_fft(const T* data, size_t data_w, size_t data_h,
     const T* filter, size_t filter_w, size_t filter_h,
     T* dst, bool correlation = false)
 {
+#if 1
     size_t dst_w = data_w + filter_w - 1;
     size_t dst_h = data_h + filter_h - 1;
+    const bool half_mode = true;
 
     // round to nearest 2^power number
     size_t fft_len_w = (size_t)std::pow(2, std::ceil(std::log2(dst_w)));
     size_t fft_len_h = (size_t)std::pow(2, std::ceil(std::log2(dst_h)));
+    size_t v_len = half_mode?fft_len_h/2+1:fft_len_h;
+    
     std::vector<complex_t<T>> seq_data;
     std::vector<complex_t<T>> seq_filter;
     std::vector<T> _data;
@@ -878,6 +987,8 @@ void convolve2d_fft(const T* data, size_t data_w, size_t data_h,
 
     _data.resize(fft_len_w*fft_len_h, (T)0);
     _filter.resize(fft_len_w*fft_len_h, (T)0);
+    seq_data.resize(fft_len_w*v_len);
+    seq_filter.resize(fft_len_w*v_len);
 
     for(size_t j=0;j<fft_len_h;j++){
         if(j<data_h){
@@ -891,7 +1002,8 @@ void convolve2d_fft(const T* data, size_t data_w, size_t data_h,
         for(size_t j=0;j<fft_len_h;j++){
             if(j<filter_h){
                 for(size_t i=0;i<filter_w;i++){
-                    _filter[j*fft_len_w+i] = filter[j*filter_w+filter_w-1-i];    // reverse!
+                    _filter[j*fft_len_w+i]
+                        = filter[(filter_h-1-j)*filter_w+filter_w-1-i];    // reverse!
                 }
             }
         }
@@ -904,7 +1016,25 @@ void convolve2d_fft(const T* data, size_t data_w, size_t data_h,
             }
         }
     }
+    
+    fft2d_r2c(_data.data(), seq_data.data(), fft_len_w, fft_len_h, half_mode);
+    fft2d_r2c(_filter.data(), seq_filter.data(), fft_len_w, fft_len_h, half_mode);
+    
+    for(size_t i=0;i<fft_len_w*v_len;i++){
+        seq_data[i] = seq_data[i] * seq_filter[i];
+    }
+    
+    std::vector<T> seq_r;
+    seq_r.resize(fft_len_w*fft_len_h);
+    ifft2d_c2r(seq_data.data(), seq_r.data(), fft_len_w, fft_len_h, half_mode);
 
+    // crop to dst size
+    for(size_t j=0;j<dst_h;j++){
+        for(size_t i=0;i<dst_w;i++){
+            dst[j*dst_w + i] = std::real(seq_r[j*fft_len_w+i]);
+        }
+    }
+#endif
 #if 0
     size_t dst_w = data_w + filter_w - 1;
     size_t dst_h = data_h + filter_h - 1;
@@ -940,8 +1070,6 @@ void convolve2d_fft(const T* data, size_t data_w, size_t data_h,
     }
 #else
     if(correlation){
-        size_t pad_w = fft_len_w-filter_w;
-        size_t pad_h = fft_len_h-filter_h;
         std::vector<complex_t<T>> tmp_filter;
         for(size_t j=0;j<filter_w*filter_h;j++){
             tmp_filter.emplace_back(filter[j], T(0));
@@ -1108,11 +1236,9 @@ void test_convolve_fft_2d(){
 int main(){
     test_convolve_fft_1d();
     test_convolve_fft_2d();
-#if 1
-    size_t size;
-    //size_t total_size = 1<<13;
-    size_t total_size = 1024;
-    for(size = 2; size<=total_size; size *= 2){
+    size_t total_size = 8;
+#if 0
+    for(size_t size = 2; size<=total_size; size *= 2){
         std::vector<complex_t<d_type>> t_seq;
         std::vector<complex_t<d_type>> f_seq;
         std::vector<complex_t<d_type>> t_seq_r;
@@ -1139,7 +1265,9 @@ int main(){
         //dump_vector(t_seq_r);
         std::cout<<"---------------------------------------"<<std::endl;
     }
-    for(size = 2; size<=total_size; size *= 2){
+#endif
+#if 1
+    for(size_t size = 2; size<=total_size; size *= 2){
         std::vector<complex_t<d_type>> t_seq;
         std::vector<complex_t<d_type>> f_seq;
         std::vector<complex_t<d_type>> t_seq_r;
@@ -1176,6 +1304,40 @@ int main(){
         //dump_vector(f_seq);
         //dump_vector(seq_fwd);
         //dump_vector(t_seq_r);
+        std::cout<<"---------------------------------------"<<std::endl;
+    }
+    for(size_t size = 2; size<=total_size; size *= 2){
+        size_t seq_w = size;
+        size_t seq_h = size;
+        std::vector<d_type> t_seq;
+        std::vector<complex_t<d_type>>  f_seq;
+        std::vector<d_type> t_seq_r;
+        std::vector<complex_t<d_type>> t_seq_r_ex;
+
+        std::vector<complex_t<d_type>>  t_seq_2;
+
+        t_seq.resize(seq_w*seq_h);
+        f_seq.resize(seq_w*seq_h);
+        t_seq_r.resize(seq_w*seq_h);
+        rand_vec(t_seq);
+        for(size_t i=0;i<seq_w*seq_h;i++){
+            t_seq_2.emplace_back( t_seq[i], (d_type)0);
+        }
+        fft2d_r2c(t_seq.data(), f_seq.data(),  seq_w,  seq_h);
+        ifft2d_c2r(f_seq.data(), t_seq_r.data(), seq_w,  seq_h);
+        for(size_t i=0;i<seq_w*seq_h;i++){
+            t_seq_r_ex.emplace_back(t_seq_r[i], (d_type)0);
+        }
+
+        fft_2d(t_seq_2.data(), seq_w, seq_h);
+        int err_cnt = valid_vector(t_seq_2, f_seq);
+        ifft_2d(t_seq_2.data(), seq_w, seq_h);
+
+        int ierr_cnt = valid_vector(t_seq_2, t_seq_r_ex);
+
+        std::cout<<"length:"<<seq_h<<"x"<<seq_w<<", r2c 2d fwd valid:"<< ( (err_cnt==0)?"y":"n" ) <<
+            ", c2r 2d bwd valid:"<<( (ierr_cnt==0)?"y":"n" ) <<std::endl;
+
         std::cout<<"---------------------------------------"<<std::endl;
     }
 #endif

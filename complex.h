@@ -15,6 +15,7 @@ private:
     T im_data;
     T re_data;
 public:
+    typedef complex_t<T> c_type;
     complex_t(){
         im_data = 0;
         re_data = 0;
@@ -52,6 +53,9 @@ public:
         result *= rhs;
         return result;
     }
+    complex_t<T> operator *(const complex_t<T>& rhs) const {
+        return const_cast<c_type*>(this)->operator *(rhs);
+    }
 
     complex_t<T> & operator *=(const T & scalar){
         this->re() = this->re() * scalar;
@@ -62,6 +66,9 @@ public:
         complex_t<T> result(this->re(), this->im());
         result *= scalar;
         return result;
+    }
+    complex_t<T> operator *(const T & scalar)const{
+        return const_cast<c_type*>(this)->operator *(scalar);
     }
 
     complex_t<T> & operator /=(const complex_t<T>& rhs){
@@ -85,6 +92,9 @@ public:
         result /= rhs;
         return result;
     }
+    complex_t<T> operator /(const complex_t<T>& rhs)const{
+        return const_cast<c_type*>(this)->operator/(rhs);
+    }
 
     complex_t<T> & operator /=(const T & scalar){
         this->re() = this->re() / scalar;
@@ -95,6 +105,9 @@ public:
         complex_t<T> result(this->re(), this->im());
         result /= scalar;
         return result;
+    }
+    complex_t<T> operator /(const T & scalar)const{
+        return const_cast<c_type*>(this)->operator/(scalar);
     }
 
     complex_t<T> & operator +=(const complex_t<T>& rhs){
@@ -110,6 +123,9 @@ public:
         result += rhs;
         return result;
     }
+    complex_t<T> operator+(const complex_t<T>& rhs)const{
+        return const_cast<c_type*>(this)->operator+(rhs);
+    }
 
     complex_t<T> & operator -= (const complex_t<T>& rhs){
         T im_ = this->im();
@@ -122,6 +138,9 @@ public:
         complex_t<T> result(this->re(), this->im());
         result -= rhs;
         return result;
+    }
+    complex_t<T> operator-(const complex_t<T>& rhs)const{
+        return const_cast<c_type*>(this)->operator-(rhs);
     }
 };
 template<typename T>
