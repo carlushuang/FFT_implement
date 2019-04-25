@@ -1133,6 +1133,131 @@ void convolve2d_fft(const T* data, size_t data_w, size_t data_h,
 #endif
 }
 
+template<typename T>
+void convolve3d_chw_naive(const T* data, size_t data_w, size_t data_h, size_t channel,
+    const T* filter, size_t filter_w, size_t filter_h,
+    T* dst, bool correlation = false)
+{
+    size_t dst_w = data_w + filter_w - 1;
+    size_t dst_h = data_h + filter_h - 1;
+    size_t pad_w = filter_w - 1;
+    size_t pad_h = filter_h - 1;
+    
+    auto get_data_value=[&](size_t dc, size_t dh, size_t dw){
+        size_t h, w;
+        h = dh-pad_h;
+        w = dw-pad_w;
+        if(dh < pad_h || h >= data_h)
+            return (T)0;
+        if(dw < pad_w || w >= data_w)
+            return (T)0;
+        size_t idx = dc*data_w*data_h + h*data_w + w;
+        return data[idx];
+    };
+
+    for(size_t h=0;h<dst_h;h++){
+        for(size_t w=0;w<dst_w;w++){
+            T acc = (T)0;
+            for(size_t c=0;c<channel;c++){
+                for(size_t r=0;r<filter_h;r++){
+                    for(size_t s=0;s<filter_w;s++){
+                        if(correlation){
+                            acc += get_data_value(c, h+r, w+s) * 
+                                filter[c*filter_w*filter_h + r*filter_w + s];
+                        }else{
+                            acc += get_data_value(c, h+r, w+s) * 
+                                filter[c*filter_w*filter_h + (filter_h-1-r)*filter_w + filter_w-1-s];
+                        }
+                    }
+                }
+            }
+            dst[h*dst_w + w] = acc;
+        }
+    }
+}
+
+template<typename T>
+void convolve3d_chw_fft(const T* data, size_t data_w, size_t data_h, size_t channel,
+    const T* filter, size_t filter_w, size_t filter_h,
+    T* dst, bool correlation = false)
+{
+    size_t dst_w = data_w + filter_w - 1;
+    size_t dst_h = data_h + filter_h - 1;
+    const bool half_mode = true;
+    
+    // round to nearest 2^power number
+    size_t fft_len_w = (size_t)std::pow(2, std::ceil(std::log2(dst_w)));
+    size_t fft_len_h = (size_t)std::pow(2, std::ceil(std::log2(dst_h)));
+    size_t v_len = half_mode?fft_len_h/2+1:fft_len_h;
+    
+    std::vector<complex_t<T>> seq_data;
+    std::vector<complex_t<T>> seq_filter;
+    std::vector<T> _data;
+    std::vector<T> _filter;
+
+    _data.resize(fft_len_w*fft_len_h, (T)0);
+    _filter.resize(fft_len_w*fft_len_h, (T)0);
+    seq_data.resize(fft_len_w*v_len*channel);
+    seq_filter.resize(fft_len_w*v_len*channel);
+    
+    // first for each channel, do 2d fft
+    for(size_t c=0;c<channel;c++){
+        const T * d = data+c*data_w*data_h;
+        const T * f = filter+c*filter_w*filter_h;
+        for(size_t j=0;j<fft_len_h;j++){
+            if(j<data_h){
+                for(size_t i=0;i<data_w;i++){
+                    _data[j*fft_len_w+i] = d[j*data_w+i];
+                }
+            }
+        }
+        
+        if(correlation){
+            for(size_t j=0;j<fft_len_h;j++){
+                if(j<filter_h){
+                    for(size_t i=0;i<filter_w;i++){
+                        _filter[j*fft_len_w+i]
+                            = f[(filter_h-1-j)*filter_w+filter_w-1-i];    // reverse!
+                    }
+                }
+            }
+        }else{
+            for(size_t j=0;j<fft_len_h;j++){
+                if(j<filter_h){
+                    for(size_t i=0;i<filter_w;i++){
+                        _filter[j*fft_len_w+i] = f[j*filter_w+i];
+                    }
+                }
+            }
+        }
+
+        fft2d_r2c(_data.data(), seq_data.data()+c*fft_len_w*v_len, fft_len_w, fft_len_h, half_mode);
+        fft2d_r2c(_filter.data(), seq_filter.data()+c*fft_len_w*v_len, fft_len_w, fft_len_h, half_mode);
+    }
+
+    // then accumulate every channel
+    std::vector<complex_t<T>> seq;
+    complex_t<T> c_zero(0,0);
+    seq.resize(fft_len_w*v_len, c_zero);
+    for(size_t c=0;c<channel;c++){
+        for(size_t i=0;i<fft_len_w*v_len;i++){
+            seq[i] += seq_data[i+c*fft_len_w*v_len] * seq_filter[i+c*fft_len_w*v_len];
+        }
+    }
+
+    // do ifft
+    std::vector<T> seq_r;
+    seq_r.resize(fft_len_w*fft_len_h);
+    ifft2d_c2r(seq.data(), seq_r.data(), fft_len_w, fft_len_h, half_mode);
+
+    // crop to dst size
+    for(size_t j=0;j<dst_h;j++){
+        for(size_t i=0;i<dst_w;i++){
+            dst[j*dst_w + i] = std::real(seq_r[j*fft_len_w+i]);
+        }
+    }
+}
+
 void test_convolve_fft_1d(){
     const size_t filter_len = 9;
     const size_t data_len = 16;
@@ -1233,9 +1358,55 @@ void test_convolve_fft_2d(){
 #endif
 }
 
+void test_convolve_fft_3d(){
+    const size_t filter_h = 3;
+    const size_t filter_w = 3;
+    const size_t data_h = 11;
+    const size_t data_w = 11;
+    const size_t channel = 7;
+
+    std::vector<d_type> data;
+    std::vector<d_type> filter;
+
+    data.resize(data_h*data_w*channel);
+    filter.resize(filter_h*filter_w*channel);
+
+    rand_vec(data);
+    rand_vec(filter);
+
+    auto test_convolve3d_func = [](
+        const std::vector<d_type> & data, size_t data_w, size_t data_h, size_t channel,
+        const std::vector<d_type> & filter, size_t filter_w, size_t filter_h,
+        const bool is_correlate)
+    {
+        std::vector<d_type> output;
+        std::vector<d_type> output_2;
+        size_t out_w = data_w + filter_w - 1;
+        size_t out_h = data_h + filter_h - 1;
+        output.resize(out_w*out_h);
+        output_2.resize(out_w*out_h);
+
+        convolve3d_chw_naive(data.data(), data_w, data_h, channel,
+                    filter.data(), filter_w, filter_h,
+                    output.data(), is_correlate);
+        convolve3d_chw_fft(data.data(), data_w, data_h, channel,
+                    filter.data(), filter_w, filter_h,
+                    output_2.data(), is_correlate);
+        int err_cnt = valid_vector(output, output_2);
+        std::cout<<  (is_correlate? "[corr3d]":"[conv3d]")<<
+            "data size:"<<channel<<"x"<<data_h<<"x"<<data_w<<"(chw)"<<
+            ", filter size:"<<channel<<"x"<<filter_h<<"x"<<filter_w<<"(crs)"<<
+            ", result valid:"<<( (err_cnt==0)?"y":"n" )<<std::endl;
+    };
+
+    test_convolve3d_func(data, data_w, data_h, channel, filter, filter_w, filter_h, true );
+    test_convolve3d_func(data, data_w, data_h, channel, filter, filter_w, filter_h, false);
+}
+
 int main(){
     test_convolve_fft_1d();
     test_convolve_fft_2d();
+    test_convolve_fft_3d();
     size_t total_size = 8;
 #if 0
     for(size_t size = 2; size<=total_size; size *= 2){
