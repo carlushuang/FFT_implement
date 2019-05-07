@@ -442,6 +442,9 @@ void ifft_cooley_tukey_r(complex_t<T> * seq, size_t length){
 *   Gr(k) = 0.5*( Xr(k)*(1-sin) + Xi(k)*cos + Xr(N/2-k)*(1+sin) + Xi(N/2-k)*cos )
 *   Gi(k) = 0.5*( Xi(k)*(1-sin) - Xr(k)*cos + Xr(N/2-k)*cos - Xi(N/2-k)(1+sin) )
 *
+*       -> Gr(0) = Xr(0) + Xi(0)
+*       -> Gi(0) = 0
+*
 *   Gr(N/2) = Xr(0) – Xi(0)
 *   Gi(N/2) = 0
 *   Gr(N–k) = Gr(k), for k = 1...N/2–1
@@ -449,6 +452,54 @@ void ifft_cooley_tukey_r(complex_t<T> * seq, size_t length){
 *
 *   NOTE:
 *   r2c->gemm->c2r, then the second half is indeed not needed
+*
+*
+*   NOTE:
+*   in 2d r2c, we first vfft r2c for each col, result every N column to N/2+1
+*   then do N/2+1 length hfft for each row
+*   indeed, we can merge the G(0) and G(N/2) together to G(0), and do hfft, and get back G(0), G(N/2)
+*   in this way, we can only do N/2 length hfft for each row.
+*
+*   Gr(0) = Xr(0) + Xi(0)
+*   Gi(0) = 0
+*   Gr(N/2) = Xr(0) - Xi(0)
+*   Gi(N/2) = 0
+*
+*   --> the image part of G(0) and G(N/2) is zero, hence we can merge G(0) G(N/2) into signle G(0):
+*   Gr(0) = Xr(0) + Xi(0)
+*   Gi(0) = Xr(0) - Xi(0)
+*
+*   then do vfft, and derive back the real fft result of G(0), G(N/2)
+*   This problem is equivalent to:
+*
+*   xa(n) = A+0*j
+*   xb(n) = B+0*j
+*   x(n) = A+B*j    A, B, is length N vector A(n), B(n), n=0...N-1
+*
+*   after do the hfft of the merged first row, we already know F.T of x(n) ->X(k)
+*   X(k)=sigma((A+B*j)*(cos(@)-sin(@)*j)),  sigma() -> add from 0...N-1. @, theta, is @(k,n)=2*PI*k*n/N
+*   X(k)=sigma( A*cos@+B*sin@ +(-A*sin@+B*cos@)*j )
+*       =sigma( R0 + I0*j)
+*
+*   we what to get both:
+*   Xa(K) = sigma( A*(cos(@)-sin(@)*j) ) = sigma( A*cos@+(-A*sin@)*j )
+*   Xb(K) = sigma( B*(cos(@)-sin(@)*j) ) = sigma( B*cos@+(-B*sin@)*j )
+*
+*   note that when k item is N-k, and @ has 2*PI period
+*   @(N-k,n) = 2*PI*(N-k)*n/N = 2*PI*n-2*PI*k*n/N = -2*PI*k*n/N = -@(k,n)   
+*
+*   hence:
+*   X(N-k)=sigma( A*cos@-B*sin@ +(A*sin@+B*cos@)*j )
+*         =sigma( R1 + I1*j)
+*
+*   So, we can get Xa(k) and Xb(k) from X(k) and X(N-k)
+*   Xa(K) = sigma( 0.5*(R0+R1)+0.5*(I0-I1)*j  )
+*   Xb(k) = sigma( 0.5*(I0+I1)+0.5*(-R0+R1)*j )
+*
+*   R0:real part of k-th, X(k)
+*   I0:image part of k-th, X(k)
+*   R1:real part of (N-k)-th, X(N-k)
+*   I1:image part of (N-k)-th, X(N-k)
 *
 */
 template<typename T>
