@@ -108,7 +108,7 @@ void bit_reverse_radix2_c(T *vec,size_t c_length){
     }
 }
 template<typename T>
-void _fft_cooley_tukey_r_mt(T * seq, size_t c_length, bool is_inverse_fft){
+void _fft_cooley_tukey_r_mt(T * seq, size_t c_length, bool is_inverse_fft, bool need_final_reverse = true){
     if(c_length == 1) return;
     assert( ( (c_length & (c_length - 1)) == 0 ) && "current only length power of 2");
 
@@ -147,8 +147,8 @@ void _fft_cooley_tukey_r_mt(T * seq, size_t c_length, bool is_inverse_fft){
             }
         }
     }
-
-    bit_reverse_radix2_c(seq, c_length);
+    if(need_final_reverse)
+        bit_reverse_radix2_c(seq, c_length);
     if(is_inverse_fft){
         for(size_t i=0;i<c_length;i++){
             seq[2*i] = seq[2*i]/c_length;
@@ -157,12 +157,12 @@ void _fft_cooley_tukey_r_mt(T * seq, size_t c_length, bool is_inverse_fft){
     }
 }
 template<typename T>
-void fft_cooley_tukey_r_mt(T * seq, size_t c_length){
-    _fft_cooley_tukey_r_mt(seq, c_length, false);
+void fft_cooley_tukey_r_mt(T * seq, size_t c_length, bool need_final_reverse = true){
+    _fft_cooley_tukey_r_mt(seq, c_length, false, need_final_reverse);
 }
 template<typename T>
-void ifft_cooley_tukey_r_mt(T * seq, size_t c_length){
-    _fft_cooley_tukey_r_mt(seq, c_length, true);
+void ifft_cooley_tukey_r_mt(T * seq, size_t c_length, bool need_final_reverse = true){
+    _fft_cooley_tukey_r_mt(seq, c_length, true, need_final_reverse);
 }
 /*
 * http://processors.wiki.ti.com/index.php/Efficient_FFT_Computation_of_Real_Input
@@ -302,7 +302,7 @@ void ifft_cooley_tukey_r_mt(T * seq, size_t c_length){
         gr = 0.5*(tr0 - ti0*s + tr1*c); \
         gi = 0.5*(ti1 - tr1*s - ti0*c); \
         gnr = 0.5*(tr0 + ti0*s - tr1*c); \
-        gni = 0.5*(-1*ti1 - tr1*s - ti0*c);\
+        gni = -0.5*(ti1 + tr1*s + ti0*c);\
     }while(0)
 template<typename T>
 void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length){
@@ -320,10 +320,12 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length){
         omega_list[i] = omega_func(length,i);
     }
 
+    std::vector<size_t> brev;
+    bit_reverse_permute(log2(length/2), brev);
     for(size_t i=0;i<length;i++){
         f_seq[i] = t_seq[i];
     }
-    fft_cooley_tukey_r_mt(f_seq, length/2);
+    fft_cooley_tukey_r_mt(f_seq, length/2, false);
 
     tmp = f_seq[0];
     f_seq[0] = f_seq[0]+f_seq[1];
@@ -331,12 +333,25 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length){
 
     if(length == 2) return;
     for(size_t i=0;i<(length/4-1);i++){
+        // dump_vector(brev.data(), length/2);
         size_t idx = i+1;
+        size_t brev_idx = brev[idx];
+        size_t brev_idx_r = brev[length/2-idx];
         T gr,gi,gnr,gni,s,c,tr0,ti0,tr1,ti1;
         std::tie(c,s) = omega_list[idx];
-        LD_C(f_seq,idx,gr,gi);
-        LD_C(f_seq,length/2-idx,gnr,gni);
+        LD_C(f_seq,brev_idx,gr,gi);
+        LD_C(f_seq,brev_idx_r,gnr,gni);
         R2C_EPILOG(gr,gi,gnr,gni,s,c,tr0,ti0,tr1,ti1);
+        if(brev_idx != idx ){
+            std::swap( brev[brev_idx] , brev[idx]);
+            std::swap( f_seq[2*brev_idx], f_seq[2*idx] );
+            std::swap( f_seq[2*brev_idx+1], f_seq[2*idx+1] );
+        }
+        if(brev_idx_r != (length/2-idx)){
+            std::swap(brev[brev_idx_r], brev[length/2-idx]);
+            std::swap(f_seq[2*brev_idx_r], f_seq[2*(length/2-idx)]);
+            std::swap(f_seq[2*brev_idx_r+1], f_seq[2*(length/2-idx)+1]);
+        }
         ST_C(f_seq,idx,gr,gi);
         ST_C(f_seq,length/2-idx,gnr,gni);
     }
