@@ -308,7 +308,7 @@ template<typename T>
 void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length){
     if(length == 1) return;
     assert( ((length & (length - 1)) == 0 ) && "current only length power of 2");
-
+    T tmp;
     auto omega_func = [](size_t total_n, size_t k){
         T theta = C_2PI*k / total_n;
         return std::make_tuple<T,T>((T)cos(theta), (T)sin(theta));
@@ -320,23 +320,22 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length){
         omega_list[i] = omega_func(length,i);
     }
 
-    std::vector<T> seq;
-    seq.resize(length);
     for(size_t i=0;i<length;i++){
-        seq[i] = t_seq[i];
+        f_seq[i] = t_seq[i];
     }
-    fft_cooley_tukey_r_mt(seq.data(), length/2);
+    fft_cooley_tukey_r_mt(f_seq, length/2);
 
-    f_seq[0] = seq[0]+seq[1];
-    f_seq[1] = seq[0]-seq[1];
+    tmp = f_seq[0];
+    f_seq[0] = f_seq[0]+f_seq[1];
+    f_seq[1] = tmp-f_seq[1];
 
     if(length == 2) return;
     for(size_t i=0;i<(length/4-1);i++){
         size_t idx = i+1;
         T gr,gi,gnr,gni,s,c,tr0,ti0,tr1,ti1;
         std::tie(c,s) = omega_list[idx];
-        LD_C(seq,idx,gr,gi);
-        LD_C(seq,length/2-idx,gnr,gni);
+        LD_C(f_seq,idx,gr,gi);
+        LD_C(f_seq,length/2-idx,gnr,gni);
         R2C_EPILOG(gr,gi,gnr,gni,s,c,tr0,ti0,tr1,ti1);
         ST_C(f_seq,idx,gr,gi);
         ST_C(f_seq,length/2-idx,gnr,gni);
@@ -344,13 +343,13 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length){
     if(length/4){
         T s,c;
         std::tie(c,s) = omega_list[length/4];
-        f_seq[2*(length/4)] = seq[2*(length/4)] + seq[2*(length/4)+1]*c;
-        f_seq[2*(length/4)+1] = -1*seq[2*(length/4)+1]*s;
+        f_seq[2*(length/4)] = f_seq[2*(length/4)] + f_seq[2*(length/4)+1]*c;
+        f_seq[2*(length/4)+1] = -1*f_seq[2*(length/4)+1]*s;
     }
 }
 
 int main(){
-#define FFT_LEN 64
+#define FFT_LEN 32
 #if 0
     float ts[2*FFT_LEN];
     float fs[2*FFT_LEN];
