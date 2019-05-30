@@ -45,6 +45,10 @@ int valid_vector(const T* lhs, const T* rhs, size_t len, T delta = (T)0.001){
     return err_cnt;
 }
 template<typename T>
+void copy_vector(const T * src, T *dst, size_t len){
+    for(size_t i=0;i<len;i++)   dst[i] = src[i];
+}
+template<typename T>
 void rand_vec(T *  seq, size_t len){
     static std::random_device rd;   // seed
     static std::mt19937 mt(rd());
@@ -346,7 +350,7 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length){
 }
 
 int main(){
-#define FFT_LEN 2
+#define FFT_LEN 64
 #if 0
     float ts[2*FFT_LEN];
     float fs[2*FFT_LEN];
@@ -361,9 +365,20 @@ int main(){
     valid_vector(fs,ts,2*FFT_LEN);
 #endif
     float ts[FFT_LEN];
+    float ts2[2*FFT_LEN];
     float fs[FFT_LEN];
-    for(size_t i=0;i<FFT_LEN;i++) ts[i] = i;
+    float fs2[2*FFT_LEN];
+    rand_vec(ts,FFT_LEN);
     fft_r2c_mt(ts,fs,FFT_LEN);
-    dump_vector(ts,FFT_LEN);
-    dump_vector(fs,FFT_LEN);
+    {
+        for(size_t i=0;i<FFT_LEN;i++){
+            ts2[2*i] = ts[i];
+            ts2[2*i+1] = 0;
+        }
+        fft_naive_mt(ts2,fs2,FFT_LEN);
+        fs2[1] = fs2[FFT_LEN];
+    }
+    valid_vector(fs,fs2,FFT_LEN);
+    //dump_vector(fs,FFT_LEN);
+    //dump_vector(fs2,2*FFT_LEN);
 }
