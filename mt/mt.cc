@@ -36,7 +36,8 @@ int valid_vector(const T* lhs, const T* rhs, size_t len, T delta = (T)0.001){
     int err_cnt = 0;
     for(size_t i = 0;i < len; i++){
         T d = lhs[i]- rhs[i];
-        d = abs(d);
+#define ABS(x) ((x)>0?(x):-1*(x))
+        d = ABS(d);
         if(d > delta){
             std::cout<<" diff at "<<i<<", lhs:"<<lhs[i]<<", rhs:"<<rhs[i]<<std::endl;
             err_cnt++;
@@ -56,6 +57,7 @@ void rand_vec(T *  seq, size_t len){
     for(size_t i=0;i<len;i++) seq[i] =  dist(mt);
 }
 // np.fft.fft(...)
+// t_seq, f_seq, have length c_length, which should be 2x longer than 2rc algo
 template<typename T>
 void fft_naive_mt(const T * t_seq, T * f_seq, size_t c_length){
     auto omega_func_n = [](size_t total_n, size_t k, size_t n){
@@ -74,6 +76,30 @@ void fft_naive_mt(const T * t_seq, T * f_seq, size_t c_length){
         }
         f_seq[2*k]=fr;
         f_seq[2*k+1]=fi;
+    }
+}
+template<typename T>
+void ifft_naive_mt(T * t_seq, const T * f_seq, size_t c_length){
+    auto omega_func_n = [](size_t total_n, size_t k, size_t n){
+        T theta = C_2PI*k*n / total_n;
+        return std::make_tuple<T,T>((T)cos(theta), (T)sin(theta));
+    };
+    size_t fft_n = c_length;
+    for(size_t k=0;k<fft_n;k++){
+        size_t n;
+        T omr, omi;
+        T fr=(T)0, fi=(T)0;
+        for(n=0;n<fft_n;n++){
+            std::tie(omr, omi) = omega_func_n(fft_n, k, n);
+            fr += f_seq[2*n]*omr-f_seq[2*n+1]*omi;
+            fi += f_seq[2*n]*omi+f_seq[2*n+1]*omr;
+        }
+        t_seq[2*k]=fr;
+        t_seq[2*k+1]=fi;
+    }
+    for(size_t i=0;i<c_length;i++){
+        t_seq[2*i] /= c_length;
+        t_seq[2*i+1] /= c_length;
     }
 }
 int bit_reverse_nbits(int v, int nbits){
@@ -107,6 +133,7 @@ void bit_reverse_radix2_c(T *vec,size_t c_length){
             { std::swap(vec[2*i], vec[2*ir]); std::swap(vec[2*i+1], vec[2*ir+1]); }
     }
 }
+// seq has c_length complex value, 2*c_length value
 template<typename T>
 void _fft_cooley_tukey_r_mt(T * seq, size_t c_length, bool is_inverse_fft, bool need_final_reverse = true){
     if(c_length == 1) return;
@@ -270,7 +297,7 @@ void ifft_cooley_tukey_r_mt(T * seq, size_t c_length, bool need_final_reverse = 
 *   Gr(N/2) = Xr(0) - Xi(0)
 *   Gi(N/2) = 0
 *
-*   sin: sin(2*PI*k/N), cos: cos(2*PI*k/N), sin(pi-t) = sin(t), cos(pi-t) = cos(t)
+*   sin: sin(2*PI*k/N), cos: cos(2*PI*k/N), sin(pi-t) = sin(t), cos(pi-t) = -cos(t)
 *
 *   Gr(k) = 0.5*( Xr(k)*(1-sin) + Xi(k)*cos + Xr(N/2-k)*(1+sin) + Xi(N/2-k)*cos )
 *   Gi(k) = 0.5*( Xi(k)*(1-sin) - Xr(k)*cos + Xr(N/2-k)*cos - Xi(N/2-k)(1+sin) )
@@ -292,9 +319,9 @@ void ifft_cooley_tukey_r_mt(T * seq, size_t c_length, bool need_final_reverse = 
 *    Gr(N/2-k) = 0.5*(tr0 + ti0*sin - tr1*cos)
 *    Gi(N/2-k) = 0.5*(-1*ti1 - tr1*sin - ti0*cos)
 *
-*   for k=N/4
-*    Gr(N/4) = Xr(N/4)+Xi(N/4)*cos
-*    Gi(N/4) = -1*Xi(N/4)*sin
+*   for k=N/4, sin(2*PI*k/N)=1, cos(2*PI*k/N)=0
+*    Gr(N/4) = Xr(N/4)+Xi(N/4)*cos = Xr(N/4)
+*    Gi(N/4) = -1*Xi(N/4)*sin = -1*Xi(N/4)
 */
 #define R2C_EPILOG(gr,gi,gnr,gni,s,c,tr0,ti0,tr1,ti1) \
     do{ \
@@ -304,8 +331,16 @@ void ifft_cooley_tukey_r_mt(T * seq, size_t c_length, bool need_final_reverse = 
         gnr = 0.5*(tr0 + ti0*s - tr1*c); \
         gni = -0.5*(ti1 + tr1*s + ti0*c);\
     }while(0)
+
+/* t_seq, f_seq all length long.
+* t_seq is length real
+* f_seq is complex, if merge_nyquist_freq == true: length value, length/2 complex value.
+*                   if merge_nyquist_freq == false: length+2 value, length/2+1 complex value.
+* indeed, the output f_seq should be length/2+1 complex value, for the 0-th and length/2-th value are all real only complex number.(Nyquist frequency)
+* if merge_nyquist_freq == true, we merge the real part of 0-th, length/2-th real part to 0-th real/image part, this can save space. but make multi-dim fft complicated
+*/
 template<typename T>
-void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length){
+void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length, bool merge_nyquist_freq=false){
     if(length == 1) return;
     assert( ((length & (length - 1)) == 0 ) && "current only length power of 2");
     T tmp;
@@ -329,7 +364,13 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length){
 
     tmp = f_seq[0];
     f_seq[0] = f_seq[0]+f_seq[1];
-    f_seq[1] = tmp-f_seq[1];
+    if(merge_nyquist_freq)
+        f_seq[1] = tmp-f_seq[1];        // merge Gr(N/2) = Xr(0) - Xi(0)
+    else{
+        f_seq[1] = 0;
+        f_seq[length] = tmp-f_seq[1];
+        f_seq[length+1] = 0;
+    }
 
     if(length == 2) return;
     for(size_t i=0;i<(length/4-1);i++){
@@ -339,6 +380,8 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length){
         size_t brev_idx_r = brev[length/2-idx];
         T gr,gi,gnr,gni,s,c,tr0,ti0,tr1,ti1;
         std::tie(c,s) = omega_list[idx];
+        //printf("%llu-%llu, %llu-%llu, c:%f, s:%f ", idx, length/2-idx,brev_idx,brev_idx_r,c,s );
+        //dump_vector(brev.data(), length/2);
         LD_C(f_seq,brev_idx,gr,gi);
         LD_C(f_seq,brev_idx_r,gnr,gni);
         R2C_EPILOG(gr,gi,gnr,gni,s,c,tr0,ti0,tr1,ti1);
@@ -356,11 +399,152 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length){
         ST_C(f_seq,length/2-idx,gnr,gni);
     }
     if(length/4){
-        T s,c;
-        std::tie(c,s) = omega_list[length/4];
-        f_seq[2*(length/4)] = f_seq[2*(length/4)] + f_seq[2*(length/4)+1]*c;
-        f_seq[2*(length/4)+1] = -1*f_seq[2*(length/4)+1]*s;
+        //T s,c;
+        //std::tie(c,s) = omega_list[length/4];
+        //f_seq[2*(length/4)] = f_seq[2*(length/4)] + f_seq[2*(length/4)+1]*c;
+        //f_seq[2*(length/4)+1] = -1*f_seq[2*(length/4)+1]*s;
+        f_seq[2*(length/4)] = f_seq[2*(length/4)];
+        f_seq[2*(length/4)+1] = -1*f_seq[2*(length/4)+1];
     }
+}
+/*
+* http://processors.wiki.ti.com/index.php/Efficient_FFT_Computation_of_Real_Input
+*
+* c2r:
+* N=length
+* 1. input G(k), len:N, form N/2 complex sequency X(k), len:N/2
+*    X(k) = G(k)A*(k) + G*(N/2-k)B*(k), k:0...N/2-1
+*           A(k) = 0.5*(1-j*W(N,k)), k:0...N/2-1
+*           B(k) = 0.5*(1+j*W(N,k)), k:0...N/2-1
+*           W(N,k) = e^( -1 * 2PI*k/N * j)
+*           A(k), B(k), same as r2c
+* 2. compute N/2 point ifft, X(k)->x(n), len:N/2
+* 3. get final real g(n) len:N, from x(n) len:N/2
+*      g(2*n)   = xr(n)
+*      g(2*n+1) = xi(n)
+*               n=0...N/2-1
+*
+* step 1 can re-write:
+*   Xr(k) = Gr(k)IAr(k) – Gi(k)IAi(k) + Gr(N/2–k)IBr(k) + Gi(N/2–k)IBi(k)
+*   Xi(k) = Gi(k)IAr(k) + Gr(k)IAi(k) + Gr(N/2–k)IBi(k) – Gi(N/2–k)IBr(k)
+*                for k = 0...N/2–1
+*   G（N/2) = G(0)
+*
+*   IA : complex conjugate of A
+*   IB : complex conjugate of B
+*   IAr(k) = 0.5*(1.0-sin(2*PI*k/N))
+*   IAi(k) = 0.5*(1*cos(2*PI*k/N))
+*   IBr(k) = 0.5*(1+sin(2*PI*k/N))
+*   IBi(k) = 0.5*(-1*cos(2*PI*k/N))
+*               k=0...N/2-1
+*
+*   Xr(k) = 0.5*( Gr(k)*(1-sin) – Gi(k)*cos + Gr(N/2–k)*(1+sin) - Gi(N/2–k)*cos )
+*   Xi(k) = 0.5*( Gi(k)*(1-sin) + Gr(k)*cos - Gr(N/2–k)*cos – Gi(N/2–k)*(1+sin) )
+*                for k = 0...N/2–1
+*
+*   for k, N/2-k, the sin/cos has following pattern:
+*   sin: sin(2*PI*k/N), cos: cos(2*PI*k/N), sin(pi-t) = sin(t), cos(pi-t) = -cos(t)
+*
+*   Xr(k) = 0.5*( Gr(k)*(1-sin) – Gi(k)*cos + Gr(N/2–k)*(1+sin) - Gi(N/2–k)*cos )
+*   Xi(k) = 0.5*( Gi(k)*(1-sin) + Gr(k)*cos - Gr(N/2–k)*cos – Gi(N/2–k)*(1+sin) )
+*
+*   Xr(N/2-k) = 0.5*( Gr(N/2-k)*(1-sin) + Gi(N/2-k)*cos + Gr(k)*(1+sin) + Gi(k)*cos )
+*   Xi(N/2-k) = 0.5*( Gi(N/2-k)*(1-sin) - Gr(N/2-k)*cos + Gr(k)*cos - Gi(k)*(1+sin) )
+*
+*  -->
+*   Xr(k) = 0.5*( Gr(k)+Gr(N/2–k) - sin*(Gr(k)-Gr(N/2–k)) - cos*(Gi(k)+Gi(N/2–k)) )
+*   Xi(k) = 0.5*( Gi(k)-Gi(N/2–k) - sin*(Gi(k)+Gi(N/2–k)) + cos*(Gr(k)-Gr(N/2–k)) )
+*   Xr(N/2-k) = 0.5*( Gr(k)+Gr(N/2-k) + sin*(Gr(k)-Gr(N/2-k)) + cos*(Gi(k)+Gi(N/2-k)) )
+*   Xi(N/2-k) = 0.5*( -(Gi(k)-Gi(N/2-k)) -sin(Gi(k)+Gi(N/2-k)) + cos(Gr(k)-Gr(N/2-k)) )
+*
+*   let:
+*    sr0=Gr(k)+Gr(N/2–k), si0=Gr(k)-Gr(N/2–k), sr1=Gi(k)+Gi(N/2-k), si1=Gi(k)-Gi(N/2-k)
+*
+*    Xr(k) = 0.5*(sr0 - si0*sin - sr1*cos)
+*    Xi(k) = 0.5*(si1 - sr1*sin + si0*cos)
+*    Xr(N/2-k) = 0.5*(sr0 + si0*sin + sr1*cos)
+*    Xi(N/2-k) = 0.5*(-1*si1 - sr1*sin + si0*cos)
+*
+*    Xr(0) = 0.5*(Gr(0)+Gr(N/2) - Gi(0)-Gi(N/2)) = 0.5*( Gr(0)-Gi(N/2) - (Gi(0)-Gr(N/2)) )
+*                                                = Gr(0)-Gi(0)
+*    Xi(0) = 0.5*(Gi(0)-Gi(N/2) + Gr(0)-Gr(N/2)) = 0.5*( Gr(0)-Gi(N/2) + Gi(0) -Gr(N/2)  )
+*                                                = 0
+*
+*
+*   for k=N/4, sin(2*PI*k/N)=1, cos(2*PI*k/N)=0
+*    Xr(N/4) = Gr(N/4)
+*    Xi(N/4) = -1*Gi(N/4)
+*
+*/
+#define C2R_EPILOG(xr,xi,xnr,xni,s,c,sr0,si0,sr1,si1)   \
+    do{                                                 \
+        sr0=xr+xnr; si0=xr-xnr; sr1=xi+xni; si1=xi-xni; \
+        xr = 0.5*(sr0 - si0*s - sr1*c);                 \
+        xi = 0.5*(si1 - sr1*s + si0*c);                 \
+        xnr = 0.5*(sr0 + si0*s + sr1*c);                \
+        xni = 0.5*(-1*si1 - sr1*s + si0*c);             \
+    }while(0)
+
+/*
+* t_seq, f_seq all length long.
+* t_seq is length real
+* f_seq is complex, if merge_nyquist_freq == true: length value, length/2 complex value.
+*                   if merge_nyquist_freq == false: length+2 value, length/2+1 complex value.
+*/
+template<typename T>
+void ifft_c2r_mt(T* t_seq, const T * f_seq, size_t length, bool merge_nyquist_freq=false){
+    if(length == 1) return;
+    assert( ((length & (length - 1)) == 0 ) && "current only length power of 2");
+
+    auto omega_func = [](size_t total_n, size_t k){
+        T theta = C_2PI*k / total_n;
+        return std::make_tuple<T,T>((T)cos(theta), (T)sin(theta));
+    };
+
+    std::vector<std::tuple<T,T>> omega_list;
+    omega_list.resize(length/2);
+    for(size_t i=0;i<length/2;i++){
+        omega_list[i] = omega_func(length,i);
+    }
+
+    //std::vector<size_t> brev;
+    //bit_reverse_permute(log2(length/2), brev);
+
+    if(length == 2) return;
+    t_seq[0] = f_seq[0] - f_seq[1];
+    t_seq[1] = 0;
+    for(size_t i=1;i<=(length/4-1);i++){
+        // dump_vector(brev.data(), length/2);
+        //size_t idx = i+1;
+        //size_t brev_idx = brev[idx];
+        //size_t brev_idx_r = brev[length/2-idx];
+        T xr,xi,xnr,xni,s,c,sr0,si0,sr1,si1;
+        std::tie(c,s) = omega_list[i];
+        //printf("%llu-%llu, %llu-%llu, c:%f, s:%f ", idx, length/2-idx,brev_idx,brev_idx_r,c,s );
+        //dump_vector(brev.data(), length/2);
+        LD_C(f_seq,i,xr,xi);
+        LD_C(f_seq,length/2-i,xnr,xni);
+        C2R_EPILOG(xr,xi,xnr,xni,s,c,sr0,si0,sr1,si1);
+#if 0
+        if(brev_idx != idx ){
+            std::swap( brev[brev_idx] , brev[idx]);
+            std::swap( f_seq[2*brev_idx], f_seq[2*idx] );
+            std::swap( f_seq[2*brev_idx+1], f_seq[2*idx+1] );
+        }
+        if(brev_idx_r != (length/2-idx)){
+            std::swap(brev[brev_idx_r], brev[length/2-idx]);
+            std::swap(f_seq[2*brev_idx_r], f_seq[2*(length/2-idx)]);
+            std::swap(f_seq[2*brev_idx_r+1], f_seq[2*(length/2-idx)+1]);
+        }
+#endif
+        ST_C(t_seq,i,xr,xi);
+        ST_C(t_seq,length/2-i,xnr,xni);
+    }
+    if(length/4){
+        t_seq[2*(length/4)] = f_seq[2*(length/4)];
+        t_seq[2*(length/4)+1] = -1*f_seq[2*(length/4)+1];
+    }
+    ifft_cooley_tukey_r_mt(t_seq, length/2, true);
 }
 
 int main(){
@@ -378,6 +562,20 @@ int main(){
     dump_vector(ts,2*FFT_LEN);
     valid_vector(fs,ts,2*FFT_LEN);
 #endif
+#if 0
+    float ts[2*FFT_LEN];
+    float fs[2*FFT_LEN];
+    //rand_vec(ts,2*FFT_LEN);
+    for(size_t i=0;i<2*FFT_LEN;i++) fs[i] = i;
+
+    ifft_naive_mt(ts,fs,FFT_LEN);
+    dump_vector(ts,2*FFT_LEN);
+    dump_vector(fs,2*FFT_LEN);
+    ifft_cooley_tukey_r_mt(fs, FFT_LEN);
+    dump_vector(fs,2*FFT_LEN);
+    valid_vector(fs,ts,2*FFT_LEN);
+#endif
+#if 0
     float ts[FFT_LEN];
     float ts2[2*FFT_LEN];
     float fs[FFT_LEN];
@@ -392,7 +590,34 @@ int main(){
         fft_naive_mt(ts2,fs2,FFT_LEN);
         fs2[1] = fs2[FFT_LEN];
     }
-    valid_vector(fs,fs2,FFT_LEN);
+    int err=valid_vector(fs,fs2,FFT_LEN);
+    printf("%s\n",err==0?"ok":"fail");
     //dump_vector(fs,FFT_LEN);
     //dump_vector(fs2,2*FFT_LEN);
+#endif
+#if 1
+    float ts[FFT_LEN];
+    float ts2[2*FFT_LEN];
+    float fs[FFT_LEN];
+    float fs2[2*FFT_LEN];
+    //rand_vec(fs,FFT_LEN);
+    for(size_t ii=0;ii<FFT_LEN;ii++) fs[ii] = ii+1;
+    ifft_c2r_mt(ts,fs,FFT_LEN);
+    {
+        for(size_t i=0;i<FFT_LEN;i++){
+            fs2[i] = fs[i];
+            //fs2[2*i+1] = 0;
+        }
+        for(size_t i=0;i<FFT_LEN/2;i++){
+            fs2[FFT_LEN+2*i] = fs2[2*i];
+            fs2[FFT_LEN+2*i+1] = -1*fs2[2*i+1];
+        }
+        ifft_naive_mt(ts2,fs2,FFT_LEN);
+        //ts2[1] = ts2[FFT_LEN];
+    }
+    int err=valid_vector(ts,ts2,FFT_LEN);
+    printf("%s\n",err==0?"ok":"fail");
+    //dump_vector(fs,FFT_LEN);
+    //dump_vector(fs2,2*FFT_LEN);
+#endif
 }

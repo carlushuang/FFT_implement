@@ -11,6 +11,17 @@
 #include <string.h>
 #include <functional>
 
+/*
+* A,B,C is complex number
+*
+* conj（A*B） = conj(A)*conj(B)
+* conj(A+B) = conj(A)+conj(B)
+* conj(A)*B = A*conj(B)
+* conj(A*B)*C = conj(A)*conj(B)*C = conj(A)*B*conj(C) = A*conj(B*C)
+* (A+B)*conj(C) = conj(A+B)*C = conj(A)*C+conj(B)*C = A*conj(C) + B*conj(C)
+* (conj(A)+B)*conj(C) = conj(A*C)+B*conj(C)
+*/
+
 #define BUFL2(a,b,w)                \
     do{                             \
         complex_t<T> temp = (a);    \
@@ -453,7 +464,6 @@ void ifft_cooley_tukey_r(complex_t<T> * seq, size_t length){
 *   NOTE:
 *   r2c->gemm->c2r, then the second half is indeed not needed
 *
-*
 *   NOTE:
 *   in 2d r2c, we first vfft r2c for each col, result every N column to N/2+1
 *   then do N/2+1 length hfft for each row
@@ -578,6 +588,7 @@ void fft_r2c(const T* t_seq, complex_t<T> * f_seq, size_t length, bool half_mode
 *   Xr(k) = 0.5*( Gr(k)*(1-sin) – Gi(k)*cos + Gr(N/2–k)*(1+sin) - Gi(N/2–k)*cos )
 *   Xi(k) = 0.5*( Gi(k)*(1-sin) + Gr(k)*cos - Gr(N/2–k)*cos – Gi(N/2–k)*(1+sin) )
 *                for k = 0...N/2–1
+*   G(N/2) = G(0)
 */
 template<typename T>
 void ifft_c2r(const complex_t<T> * f_seq, T* t_seq, size_t length, bool half_mode=false){
@@ -617,6 +628,8 @@ void ifft_c2r(const complex_t<T> * f_seq, T* t_seq, size_t length, bool half_mod
         t_seq[2*i] = std::real(seq[i]);
         t_seq[2*i+1] = std::imag(seq[i]);
     }
+    
+    
 }
 
 template<typename T>
