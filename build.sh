@@ -1,6 +1,6 @@
 #!/bin/sh
 SRC=fft.cc
-TARGET=fft
+TARGET=fft.exe
 CXX=g++
 CXX_FLAGS="-O2 -Wall -lm -std=c++11 "
 CXX_FLAGS="$CXX_FLAGS -g"

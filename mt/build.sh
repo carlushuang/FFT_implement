@@ -1,0 +1,16 @@
+#!/bin/sh
+SRC=mt.cc
+TARGET=mt.exe
+CXX=g++
+CXX_FLAGS="-O2 -Wall -std=c++11 "
+CXX_FLAGS="$CXX_FLAGS -g"
+LDFLAGS="-lm "
+
+USE_FFTW=0
+if [ "x$USE_FFTW" = "x1" ];then
+    CXX_FLAGS="$CXX_FLAGS -DUSE_FFTW -I/usr/local/include"
+    LDFLAGS="$LDFLAGS -L/usr/local/lib -Wl,-Bstatic -lfftw3 -Wl,-Bdynamic"
+fi
+
+rm -rf $TARGET
+$CXX $SRC $CXX_FLAGS $LDFLAGS -o $TARGET

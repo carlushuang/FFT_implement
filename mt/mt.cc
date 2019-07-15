@@ -7,7 +7,9 @@
 #include <functional>
 #include <random>
 #include <stdlib.h>
-
+#ifdef USE_FFTW
+#include <fftw3.h>
+#endif
 #define LD_C(vec,idx,r,i) do{r=vec[2*(idx)];i=vec[2*(idx)+1];}while(0)
 #define ST_C(vec,idx,r,i) do{vec[2*(idx)]=r;vec[2*(idx)+1]=i;}while(0)
 #if 0
@@ -466,9 +468,9 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length, bool merge_nyquist_fre
 *    Xi(N/2-k) = 0.5*(-1*si1 - sr1*sin + si0*cos)
 *
 *    Xr(0) = 0.5*(Gr(0)+Gr(N/2) - Gi(0)-Gi(N/2)) = 0.5*( Gr(0)-Gi(N/2) - (Gi(0)-Gr(N/2)) )
-*                                                = Gr(0)-Gi(0)
+*                                                = Gr(0)-Gi(0) ?
 *    Xi(0) = 0.5*(Gi(0)-Gi(N/2) + Gr(0)-Gr(N/2)) = 0.5*( Gr(0)-Gi(N/2) + Gi(0) -Gr(N/2)  )
-*                                                = 0
+*                                                = 0 ?
 *
 *
 *   for k=N/4, sin(2*PI*k/N)=1, cos(2*PI*k/N)=0
@@ -493,6 +495,7 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length, bool merge_nyquist_fre
 */
 template<typename T>
 void ifft_c2r_mt(T* t_seq, const T * f_seq, size_t length, bool merge_nyquist_freq=false){
+    // the 0-th and length/2-th complex number, image part must be zero, same as fftw
     if(length == 1) return;
     assert( ((length & (length - 1)) == 0 ) && "current only length power of 2");
 
@@ -511,8 +514,19 @@ void ifft_c2r_mt(T* t_seq, const T * f_seq, size_t length, bool merge_nyquist_fr
     //bit_reverse_permute(log2(length/2), brev);
 
     if(length == 2) return;
-    t_seq[0] = f_seq[0] - f_seq[1];
-    t_seq[1] = 0;
+    if(!merge_nyquist_freq){
+        //t_seq[0] = 0.5*(f_seq[0]-f_seq[length+1]-f_seq[1]+f_seq[length]);
+        //t_seq[1] = 0.5*(f_seq[0]-f_seq[length+1]+f_seq[1]-f_seq[length]);   
+        // 0.5*( Gr(0)-Gi(N/2) - (Gi(0)-Gr(N/2)) )  )
+        // 0.5*( Gr(0)-Gi(N/2) + Gi(0) -Gr(N/2)
+        t_seq[0] = 0.5*(f_seq[0]+f_seq[length]);
+        t_seq[1] = 0.5*(f_seq[0]-f_seq[length]);
+    }else{
+        // ?
+        t_seq[0] = f_seq[0] - f_seq[1];
+        t_seq[1] = 0;
+    }
+    
     for(size_t i=1;i<=(length/4-1);i++){
         // dump_vector(brev.data(), length/2);
         //size_t idx = i+1;
@@ -582,14 +596,36 @@ int main(){
     float fs2[2*FFT_LEN];
     rand_vec(ts,FFT_LEN);
     fft_r2c_mt(ts,fs,FFT_LEN);
+#ifdef USE_FFTW
+    {
+        fftw_plan p;
+        fftw_complex *out;
+        double * in;
+        in = (double*)fftw_malloc(sizeof(double)*FFT_LEN);
+        for(size_t i=0;i<FFT_LEN;i++){
+            in[i] = ts[i];
+        }
+        out = (fftw_complex*)fftw_malloc(sizeof(fftw_complex)*(FFT_LEN/2+1));
+        p=fftw_plan_dft_r2c_1d(FFT_LEN,in,out, FFTW_ESTIMATE);
+        fftw_execute(p);
+        for(size_t i=0;i<FFT_LEN/2;i++){
+            fs2[2*i] = out[i][0];
+            fs2[2*i+1] = out[i][1];
+        }
+        fftw_destroy_plan(p);
+        fftw_free(out);
+        fftw_free(in);
+    }
+#else
     {
         for(size_t i=0;i<FFT_LEN;i++){
             ts2[2*i] = ts[i];
             ts2[2*i+1] = 0;
         }
         fft_naive_mt(ts2,fs2,FFT_LEN);
-        fs2[1] = fs2[FFT_LEN];
+        //fs2[1] = fs2[FFT_LEN];
     }
+#endif
     int err=valid_vector(fs,fs2,FFT_LEN);
     printf("%s\n",err==0?"ok":"fail");
     //dump_vector(fs,FFT_LEN);
@@ -598,23 +634,60 @@ int main(){
 #if 1
     float ts[FFT_LEN];
     float ts2[2*FFT_LEN];
-    float fs[FFT_LEN];
+    float fs[FFT_LEN+2];
     float fs2[2*FFT_LEN];
-    //rand_vec(fs,FFT_LEN);
-    for(size_t ii=0;ii<FFT_LEN;ii++) fs[ii] = ii+1;
+    rand_vec(fs,FFT_LEN+2);
+    //for(size_t ii=0;ii<(FFT_LEN+2);ii++) fs[ii] = ii+1;
+    //fs[1]=fs[FFT_LEN+1]=0;
     ifft_c2r_mt(ts,fs,FFT_LEN);
+#ifdef USE_FFTW
     {
+        fftw_plan p;
+        double * out;
+        fftw_complex * in;
+        in = (fftw_complex*)fftw_malloc(sizeof(fftw_complex)*(FFT_LEN/2+1));
+        for(size_t i=0;i<(FFT_LEN/2+1);i++){
+            in[i][0] = fs[2*i];
+            in[i][1] = fs[2*i+1];
+        }
+        out = (double*)fftw_malloc(sizeof(double)*FFT_LEN);
+        // fftw compute ifft unnormalized. need divide by N
+        p=fftw_plan_dft_c2r_1d(FFT_LEN,in,out, FFTW_ESTIMATE);
+        fftw_execute(p);
         for(size_t i=0;i<FFT_LEN;i++){
-            fs2[i] = fs[i];
-            //fs2[2*i+1] = 0;
+            ts2[i] = out[i]/FFT_LEN;
         }
-        for(size_t i=0;i<FFT_LEN/2;i++){
-            fs2[FFT_LEN+2*i] = fs2[2*i];
-            fs2[FFT_LEN+2*i+1] = -1*fs2[2*i+1];
-        }
-        ifft_naive_mt(ts2,fs2,FFT_LEN);
-        //ts2[1] = ts2[FFT_LEN];
+        fftw_destroy_plan(p);
+        fftw_free(out);
+        fftw_free(in);
     }
+#else
+    {
+        // restore the hermitian structure of the full complex value, other wise can not get the correct value   
+        //     b) for second half:
+        //      Gr(N/2) = Xr(0) - Xi(0),    real - imag
+        //      Gi(N/2) = 0
+        //      G(N-k) = G*(k), k:1...N/2-1
+        fs2[0] = fs[0];
+        fs2[1] = 0;
+        for(size_t i=1;i<FFT_LEN/2;i++){
+            fs2[2*i] = fs[2*i];
+            fs2[2*i+1] = fs[2*i+1];
+        }
+        fs2[FFT_LEN] = fs[FFT_LEN];
+        fs2[FFT_LEN+1] = 0;
+        for(size_t i=1;i<FFT_LEN/2;i++){
+            fs2[2*FFT_LEN-2*i] = fs2[2*i];
+            fs2[2*FFT_LEN-2*i+1] = -fs2[2*i+1];
+        }
+        //fs2[1]=fs2[FFT_LEN+1]=fs2[2*FFT_LEN-1]=0;
+
+        ifft_naive_mt(ts2,fs2,FFT_LEN);
+        for(size_t i=0;i<FFT_LEN;i++){
+            ts2[i] = ts2[2*i];
+        }
+    }
+#endif
     int err=valid_vector(ts,ts2,FFT_LEN);
     printf("%s\n",err==0?"ok":"fail");
     //dump_vector(fs,FFT_LEN);
