@@ -34,7 +34,16 @@ void dump_vector(const T * vec, size_t len){
     std::cout<<std::endl;
 }
 template<typename T>
-int valid_vector(const T* lhs, const T* rhs, size_t len, T delta = (T)0.001){
+void dump_vector_2d(const T * vec, size_t width, size_t height){
+    for(size_t j=0;j<height;j++){
+        for(size_t i=0;i<width;i++){
+            std::cout<<vec[j*width+i]<<", ";
+        }
+        std::cout<<std::endl;
+    }
+}
+template<typename T>
+int valid_vector(const T* lhs, const T* rhs, size_t len, T delta = (T)0.002){
     int err_cnt = 0;
     for(size_t i = 0;i < len; i++){
         T d = lhs[i]- rhs[i];
@@ -47,6 +56,7 @@ int valid_vector(const T* lhs, const T* rhs, size_t len, T delta = (T)0.001){
     }
     return err_cnt;
 }
+
 template<typename T>
 void copy_vector(const T * src, T *dst, size_t len){
     for(size_t i=0;i<len;i++)   dst[i] = src[i];
@@ -369,8 +379,8 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length, bool merge_nyquist_fre
     if(merge_nyquist_freq)
         f_seq[1] = tmp-f_seq[1];        // merge Gr(N/2) = Xr(0) - Xi(0)
     else{
-        f_seq[1] = 0;
         f_seq[length] = tmp-f_seq[1];
+        f_seq[1] = 0;
         f_seq[length+1] = 0;
     }
 
@@ -408,6 +418,80 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length, bool merge_nyquist_fre
         f_seq[2*(length/4)] = f_seq[2*(length/4)];
         f_seq[2*(length/4)+1] = -1*f_seq[2*(length/4)+1];
     }
+}
+/*
+* t_seq, f_seq all length long.
+* t_seq is seq_h*seq_w real
+* f_seq is complex, if merge_nyquist_freq == true: (seq_h/2)*(2*seq_w) value, (seq_h/2)*seq_w complex value.
+*                   if merge_nyquist_freq == false: (seq_h/2+1)*(2*seq_w) value, (seq_h/2+1)*seq_w complex value.
+*/
+template<typename T>
+void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h, bool merge_nyquist_freq=false){
+    // vertical
+    T * vt = new T[seq_h];
+    T * vf = new T[merge_nyquist_freq?seq_h:(seq_h+2)];
+    size_t v_len = merge_nyquist_freq?seq_h:(seq_h+2);
+    for(size_t w=0;w<seq_w;w++){
+        for(size_t h=0;h<seq_h;h++){
+            vt[h] = t_seq[h*seq_w+w];
+        }
+        fft_r2c_mt(vt, vf, seq_h, merge_nyquist_freq);
+
+        for(size_t h=0;h<v_len/2;h++){
+            f_seq[h*2*seq_w+2*w] = vf[2*h];
+            f_seq[h*2*seq_w+2*w+1] = vf[2*h+1];
+        }
+    }
+    delete [] vt;
+    delete [] vf;
+    //printf("++++++++++++++++++++++++++\n");
+    //dump_vector_2d(f_seq, 2*seq_w, v_len/2);
+    //printf("++++++++++++++++++++++++++\n");
+#if 0
+    for(size_t h=0;h<v_len/2;h++)
+        fft_cooley_tukey_r_mt(f_seq+h*2*seq_w, seq_w);
+#endif
+#if 1
+    auto omega_func = [](size_t total_n, size_t k){
+        T theta = -C_2PI*k / total_n;
+        return std::make_tuple<T,T>((T)cos(theta), (T)sin(theta));
+    };
+
+    // horizontal
+    T * h_even = new T[seq_w];
+    T * h_odd  = new T[seq_w];
+    for(size_t h=0;h<v_len/2;h++){
+        for(size_t w=0;w<seq_w/2;w++){
+            h_even[2*w]     = f_seq[h*2*seq_w+4*w+0];
+            h_even[2*w+1]   = f_seq[h*2*seq_w+4*w+1];
+            h_odd[2*w]      = f_seq[h*2*seq_w+4*w+2];
+            h_odd[2*w+1]    = f_seq[h*2*seq_w+4*w+3];
+        }
+        fft_cooley_tukey_r_mt(h_even, seq_w/2);
+        fft_cooley_tukey_r_mt(h_odd, seq_w/2);
+
+        for(size_t w=0;w<seq_w/2;w++){
+            T c,s;
+            std::tie(c,s) = omega_func(seq_w, w);
+            //
+            // even:er+ei*i, odd:or+oi*i, omega:wr+wi*i
+            //
+            // er+ei*i+(or+oi*i)*(wr+wi*i)
+            // er+or*wr-oi*wi + (ei+or*wi+oi*wr)i
+            //
+            // er+ei*i-(or+oi*i)*(wr+wi*i)
+            // er-or*wr+oi*wi + (ei-or*wi-oi*wr)*i
+            //
+            f_seq[h*2*seq_w+2*w] = h_even[2*w]+h_odd[2*w]*c-h_odd[2*w+1]*s;
+            f_seq[h*2*seq_w+2*w+1] = h_even[2*w+1]+h_odd[2*w]*s+h_odd[2*w+1]*c;
+
+            f_seq[h*2*seq_w+seq_w+2*w] = h_even[2*w]-h_odd[2*w]*c+h_odd[2*w+1]*s;
+            f_seq[h*2*seq_w+seq_w+2*w+1] = h_even[2*w+1]-h_odd[2*w]*s-h_odd[2*w+1]*c;
+        }
+    }
+    delete [] h_even;
+    delete [] h_odd;
+#endif
 }
 /*
 * http://processors.wiki.ti.com/index.php/Efficient_FFT_Computation_of_Real_Input
@@ -468,14 +552,26 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length, bool merge_nyquist_fre
 *    Xi(N/2-k) = 0.5*(-1*si1 - sr1*sin + si0*cos)
 *
 *    Xr(0) = 0.5*(Gr(0)+Gr(N/2) - Gi(0)-Gi(N/2)) = 0.5*( Gr(0)-Gi(N/2) - (Gi(0)-Gr(N/2)) )
-*                                                = Gr(0)-Gi(0) ?
+*                                                = 
 *    Xi(0) = 0.5*(Gi(0)-Gi(N/2) + Gr(0)-Gr(N/2)) = 0.5*( Gr(0)-Gi(N/2) + Gi(0) -Gr(N/2)  )
-*                                                = 0 ?
-*
+*                                                = 
 *
 *   for k=N/4, sin(2*PI*k/N)=1, cos(2*PI*k/N)=0
 *    Xr(N/4) = Gr(N/4)
 *    Xi(N/4) = -1*Gi(N/4)
+*
+*   w conj case:
+*    Xr(k) = 0.5*( Gr(k)*(1-sin) + Gi(k)*cos + Gr(N/2–k)*(1+sin) + Gi(N/2–k)*cos )
+*    Xi(k) = 0.5*( Gi(k)*(1-sin) - Gr(k)*cos + Gr(N/2–k)*cos – Gi(N/2–k)*(1+sin) )
+*
+*    Xr(k) = 0.5*( Gr(k)+Gr(N/2–k) - sin*(Gr(k)-Gr(N/2–k)) + cos*(Gi(k)+Gi(N/2–k)) )
+*    Xi(k) = 0.5*( Gi(k)-Gi(N/2–k) - sin*(Gi(k)+Gi(N/2–k)) - cos*(Gr(k)-Gr(N/2–k)) )
+*    Xr(N/2-k) = 0.5*( Gr(k)+Gr(N/2–k) + sin*(Gr(k)-Gr(N/2–k)) + cos*(Gi(k)+Gi(N/2–k)) )
+*    Xi(N/2-k) = 0.5*( -Gi(k)+Gi(N/2–k) - sin*(Gi(k)+Gi(N/2–k)) + cos*(Gr(k)-Gr(N/2–k)) )
+*
+*    Xr(0)=0.5*(Gr(0)+Gr(N/2) + Gi(0) + Gi(N/2)  )
+*    Xi(0)=0.5*(Gi(0)-Gi(N/2) - Gr(0) + Gr(N/2)  )
+*
 *
 */
 #define C2R_EPILOG(xr,xi,xnr,xni,s,c,sr0,si0,sr1,si1)   \
@@ -523,10 +619,10 @@ void ifft_c2r_mt(T* t_seq, const T * f_seq, size_t length, bool merge_nyquist_fr
         t_seq[1] = 0.5*(f_seq[0]-f_seq[length]);
     }else{
         // ?
-        t_seq[0] = f_seq[0] - f_seq[1];
-        t_seq[1] = 0;
+        t_seq[0] = 0.5*(f_seq[0]+f_seq[1]);
+        t_seq[1] = 0.5*(f_seq[0]-f_seq[1]);
     }
-    
+
     for(size_t i=1;i<=(length/4-1);i++){
         // dump_vector(brev.data(), length/2);
         //size_t idx = i+1;
@@ -560,36 +656,230 @@ void ifft_c2r_mt(T* t_seq, const T * f_seq, size_t length, bool merge_nyquist_fr
     }
     ifft_cooley_tukey_r_mt(t_seq, length/2, true);
 }
+/*
+* t_seq is seq_h*seq_w real
+* f_seq is complex, if merge_nyquist_freq == true: (seq_h/2)*(2*seq_w) value, (seq_h/2)*seq_w complex value.
+*                   if merge_nyquist_freq == false: (seq_h/2+1)*(2*seq_w) value, (seq_h/2+1)*seq_w complex value.
+*/
+template<typename T>
+void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h, bool merge_nyquist_freq=false){
+    size_t v_len = merge_nyquist_freq?seq_h:(seq_h+2);
+    T * seq = new T[v_len*seq_w];
+    // horizontal
+    for(size_t h=0;h<v_len/2;h++){
+        for(size_t w=0;w<2*seq_w;w++){
+            seq[h*2*seq_w+w] = f_seq[h*2*seq_w+w];
+        }
+        ifft_cooley_tukey_r_mt(seq+h*2*seq_w, seq_w, true);
+    }
+    //printf("--------------------------\n");
+    //dump_vector_2d(seq, 2*seq_w, v_len/2);
+    //printf("--------------------------\ n");
+    T * vf = new T[v_len];
+    T * vt = new T[seq_h];
+    // vertical
+    for(size_t w=0;w<seq_w;w++){
+        for(size_t h=0;h<v_len/2;h++){
+            vf[2*h] = seq[h*2*seq_w+2*w];
+            vf[2*h+1] = seq[h*2*seq_w+2*w+1];
+        }
+        ifft_c2r_mt(vt, vf, seq_h, merge_nyquist_freq);
+        for(size_t h=0;h<seq_h;h++){
+            t_seq[h*seq_w+w] = vt[h];
+        }
+    }
+    delete [] seq;
+    delete [] vf;
+    delete [] vt;
+}
 
-int main(){
-#define FFT_LEN 32
-#if 0
+// this is ML/AI convolution, not that in signal process.
+template<typename T>
+void convolve2d_naive(const T* data, size_t data_w, size_t data_h,
+    const T* filter, size_t filter_w, size_t filter_h,
+    size_t pad_h, size_t pad_w,
+    T* dst, bool correlation = false)
+{
+    assert((filter_w-1)>=pad_w);
+    assert((filter_h-1)>=pad_h);
+    // NOTE: in ML/AI, padding is different from signal.
+    // in signal process, padding is acctually data_size+filter_size-1, to get full DFT
+    // following fomula use ML/AI definition
+    size_t dst_h = data_h + 2*pad_h - filter_h + 1;
+    size_t dst_w = data_w + 2*pad_w - filter_w + 1;
+    //size_t pad_h = filter_h -1;
+    //size_t pad_w = filter_w -1;
+    size_t i,j,ki,kj;
+
+    std::vector<T> _ff;
+    const T * f = filter;
+
+    if(!correlation){
+        _ff.resize(filter_w*filter_h);
+        for(size_t ii=0;ii<filter_w*filter_h;ii++){
+            _ff[ii] = filter[filter_w*filter_h-1-ii];
+        }
+        f = _ff.data();
+    }
+    //memset(dst, 0, dst_w*dst_h*sizeof(T));
+
+    auto get_data_value=[&](size_t dh, size_t dw){
+        size_t h, w;
+        h = dh-pad_h;
+        w = dw-pad_w;
+        if(dh < pad_h || h >= data_h)
+            return (T)0;
+        if(dw < pad_w || w >= data_w)
+            return (T)0;
+        size_t idx = h * data_w + w;
+        return data[idx];
+    };
+    for(j=0;j<dst_h;j++){
+        for(i=0;i<dst_w;i++){
+            T v = 0;
+            for(kj=0;kj<filter_h;kj++){
+                for(ki=0;ki<filter_w;ki++){
+                    v += f[kj*filter_w+ki] * get_data_value(j+kj, i+ki);
+                }
+            }
+            dst[j*dst_w+i] = v;
+        }
+    }
+}
+
+// this is ML/AI convolution, not that in signal process.
+template<typename T>
+void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
+    const T* filter, size_t filter_w, size_t filter_h,
+    size_t pad_h, size_t pad_w,
+    T* dst, bool correlation = false)
+{
+    assert((filter_w-1)>=pad_w);
+    assert((filter_h-1)>=pad_h);
+    size_t dst_h = data_h + 2*pad_h - filter_h + 1;
+    size_t dst_w = data_w + 2*pad_w - filter_w + 1;
+    // ML/AI, output size is data_size+2*pad-filter_size+1
+    // But in signal process, convolve means data_size+filter_size-1 sequency is convolved
+    // Hence we must padding to signal process FFT size (data_size+filter_size-1)
+    // Otherwise, the output is shifted.
+    size_t seq_pad_h = (size_t)std::pow(2, std::ceil(std::log2(data_h + filter_h-1)));
+    size_t seq_pad_w = (size_t)std::pow(2, std::ceil(std::log2(data_w + filter_w-1)));
+    bool merge_nyquist_freq = false;
+    size_t fft_h = merge_nyquist_freq?(seq_pad_h/2):(seq_pad_h/2+1);
+    size_t fft_w = 2*seq_pad_w;
+
+    T * seq_data    = new T[seq_pad_h*seq_pad_w];
+    T * seq_filter  = new T[seq_pad_h*seq_pad_w];
+    T * fft_data    = new T[fft_h*fft_w];
+    T * fft_filter  = new T[fft_h*fft_w];
+    T * fft_out     = new T[fft_h*fft_w];
+    T * dst_pad     = new T[seq_pad_h*seq_pad_w];
+
+    for(size_t i=0;i<seq_pad_h*seq_pad_w;i++){
+        seq_data[i] = (T)0;
+        seq_filter[i] = (T)0;
+    }
+
+    for(size_t j=0;j<data_h;j++){
+        for(size_t i=0;i<data_w;i++){
+#ifdef PRE_PAD_DATA
+            // PAD HERE! hence the shift is only filter_size-1 from signal process
+            seq_data[(j+pad_h)*seq_pad_w+i+pad_w] = data[j*data_w+i];
+#else
+            seq_data[j*seq_pad_w+i] = data[j*data_w+i];
+#endif
+        }
+    }
+
+    if(correlation){
+        for(size_t j=0;j<filter_h;j++){
+            for(size_t i=0;i<filter_w;i++){
+                seq_filter[j*seq_pad_w+i] = filter[(filter_h-1-j)*filter_w+filter_w-1-i]; // reverse!
+            }
+        }
+    }else{
+        for(size_t j=0;j<filter_h;j++){
+            for(size_t i=0;i<filter_w;i++){
+                seq_filter[j*seq_pad_w+i] = filter[j*filter_w+i];
+            }
+        }
+    }
+
+    // 1: fft data, fft filter
+    fft2d_r2c_mt(seq_data, fft_data, seq_pad_w, seq_pad_h, merge_nyquist_freq);
+    fft2d_r2c_mt(seq_filter, fft_filter, seq_pad_w, seq_pad_h, merge_nyquist_freq);
+
+
+    // 2: element wise multiply
+    for(size_t j=0;j<fft_h;j++){
+        for(size_t i=0;i<fft_w/2;i++){
+            fft_out[j*fft_w+2*i] = fft_data[j*fft_w+2*i]*fft_filter[j*fft_w+2*i] - fft_data[j*fft_w+2*i+1]*fft_filter[j*fft_w+2*i+1];
+            fft_out[j*fft_w+2*i+1] = fft_data[j*fft_w+2*i]*fft_filter[j*fft_w+2*i+1] + fft_data[j*fft_w+2*i+1]*fft_filter[j*fft_w+2*i];
+        }
+    }
+
+    // 3: ifft output
+    ifft2d_c2r_mt(dst_pad, fft_out, seq_pad_w, seq_pad_h, merge_nyquist_freq);
+
+    // This is the shift value from signal process to ML/AI meaninig.
+    // e.g if filter_size=3, pad=2, then singal and ML/AI has the same meaning.
+#ifdef PRE_PAD_DATA
+    // PAD HERE! hence the shift is only filter_size-1 from signal process
+    size_t shift_h = filter_h-1;
+    size_t shift_w = filter_w-1;
+#else
+    size_t shift_h = filter_h-1-pad_h;
+    size_t shift_w = filter_w-1-pad_w;
+#endif
+
+    for(size_t j=0;j<dst_h;j++){
+        for(size_t i=0;i<dst_w;i++){
+            // NOTICE: must do shift to get back what ML/AI needed. see PRE_PAD_DATA to check 2 padding method
+            dst[j*dst_w+i] = dst_pad[(j+shift_h)*seq_pad_w+i+shift_w];
+        }
+    }
+    delete []  seq_data;
+    delete []  seq_filter;
+    delete []  fft_data;
+    delete []  fft_filter;
+    delete []  fft_out;
+    delete []  dst_pad;
+}
+
+#define FFT_LEN 8
+
+void test_fft(){
+    printf("[%s]\n",__func__);
     float ts[2*FFT_LEN];
     float fs[2*FFT_LEN];
     //rand_vec(ts,2*FFT_LEN);
     for(size_t i=0;i<2*FFT_LEN;i++) ts[i] = i;
 
     fft_naive_mt(ts,fs,FFT_LEN);
-    dump_vector(ts,2*FFT_LEN);
-    dump_vector(fs,2*FFT_LEN);
+    //dump_vector(ts,2*FFT_LEN);
+    //dump_vector(fs,2*FFT_LEN);
     fft_cooley_tukey_r_mt(ts, FFT_LEN);
-    dump_vector(ts,2*FFT_LEN);
-    valid_vector(fs,ts,2*FFT_LEN);
-#endif
-#if 0
+    //dump_vector(ts,2*FFT_LEN);
+    int err=valid_vector(fs,ts,2*FFT_LEN);
+    printf("%s\n",err==0?"ok":"fail");
+}
+void test_ifft(){
+    printf("[%s]\n",__func__);
     float ts[2*FFT_LEN];
     float fs[2*FFT_LEN];
     //rand_vec(ts,2*FFT_LEN);
     for(size_t i=0;i<2*FFT_LEN;i++) fs[i] = i;
 
     ifft_naive_mt(ts,fs,FFT_LEN);
-    dump_vector(ts,2*FFT_LEN);
-    dump_vector(fs,2*FFT_LEN);
+    //dump_vector(ts,2*FFT_LEN);
+    //dump_vector(fs,2*FFT_LEN);
     ifft_cooley_tukey_r_mt(fs, FFT_LEN);
-    dump_vector(fs,2*FFT_LEN);
-    valid_vector(fs,ts,2*FFT_LEN);
-#endif
-#if 0
+    //dump_vector(fs,2*FFT_LEN);
+    int err=valid_vector(fs,ts,2*FFT_LEN);
+    printf("%s\n",err==0?"ok":"fail");
+}
+void test_fft_r2c(){
+    printf("[%s]\n",__func__);
     float ts[FFT_LEN];
     float ts2[2*FFT_LEN];
     float fs[FFT_LEN];
@@ -630,8 +920,9 @@ int main(){
     printf("%s\n",err==0?"ok":"fail");
     //dump_vector(fs,FFT_LEN);
     //dump_vector(fs2,2*FFT_LEN);
-#endif
-#if 1
+}
+void test_ifft_c2r(){
+    printf("[%s]\n",__func__);
     float ts[FFT_LEN];
     float ts2[2*FFT_LEN];
     float fs[FFT_LEN+2];
@@ -690,7 +981,83 @@ int main(){
 #endif
     int err=valid_vector(ts,ts2,FFT_LEN);
     printf("%s\n",err==0?"ok":"fail");
-    //dump_vector(fs,FFT_LEN);
-    //dump_vector(fs2,2*FFT_LEN);
+}
+void test_fft2d_r2c(){
+    printf("[test fft2d r2c]\n");
+    //bool merge_nyquist_freq=false;
+    float fs[(FFT_LEN/2+1)*(2*FFT_LEN)];
+    float fs2[(FFT_LEN/2+1)*(2*FFT_LEN)];
+    float ts[FFT_LEN*FFT_LEN];
+    //rand_vec(ts,FFT_LEN);
+    for(size_t i=0;i<FFT_LEN*FFT_LEN;i++) ts[i] = i;
+    fft2d_r2c_mt(ts, fs, FFT_LEN, FFT_LEN, false);
+    dump_vector_2d(fs, 2*FFT_LEN,  FFT_LEN/2+1 );
+    printf("-------------------------\n");
+#ifdef USE_FFTW
+    {
+        //http://www.fftw.org/fftw3_doc/Multi_002dDimensional-DFTs-of-Real-Data.html
+        // fftw r2c 2d is first hfft, then vfft, different from us.
+        fftw_plan p;
+        double * in;
+        fftw_complex * out;
+        in = (double*)fftw_malloc(sizeof(double)*FFT_LEN*FFT_LEN);
+        for(size_t i=0;i<FFT_LEN*FFT_LEN;i++){
+            in[i] = ts[i];
+        }
+        out = (fftw_complex*)fftw_malloc(sizeof(fftw_complex)*  ( (FFT_LEN/2+1)*FFT_LEN )     );
+        // fftw compute ifft unnormalized. need divide by N
+        p=fftw_plan_dft_r2c_2d(FFT_LEN,FFT_LEN, in, out, FFTW_ESTIMATE);
+        fftw_execute(p);
+        for(size_t j=0;j<FFT_LEN;j++){
+            for(size_t i=0;i<(FFT_LEN/2+1);i++){
+               fs2[j*2*(FFT_LEN/2+1)+2*i] = out[j*(FFT_LEN/2+1)+i][0];
+               fs2[j*2*(FFT_LEN/2+1)+2*i+1] = out[j*(FFT_LEN/2+1)+i][1];
+            }
+        }
+        dump_vector_2d(fs2, 2*(FFT_LEN/2+1), FFT_LEN);
+        fftw_destroy_plan(p);
+        fftw_free(out);
+        fftw_free(in);
+    }
+#else
+    printf("... not implemented reference\n");
 #endif
+}
+void test_convolve_2d(){
+    const size_t data_wh=13;
+    const size_t pad_wh=4;
+    const size_t filter_wh=7;
+    const size_t out_wh =  data_wh + 2*pad_wh - filter_wh + 1;
+
+    float * data = new float[data_wh*data_wh];
+    float * filter = new float[filter_wh*filter_wh];
+    float * out = new float[out_wh*out_wh];
+    float * out_mt = new float[out_wh*out_wh];
+
+    //rand_vec(data,data_wh*data_wh);
+    //rand_vec(filter,filter_wh*filter_wh);
+    for(size_t i=0;i<data_wh*data_wh;i++) data[i] = i;
+    for(size_t i=0;i<filter_wh*filter_wh;i++) filter[i] = i;
+
+    convolve2d_naive(data, data_wh, data_wh, filter, filter_wh, filter_wh, pad_wh, pad_wh, out, true);
+    convolve2d_fft_mt(data, data_wh, data_wh, filter, filter_wh, filter_wh, pad_wh, pad_wh, out_mt, true);
+
+    printf("--------------------\n");
+    dump_vector_2d(out,out_wh, out_wh);
+    printf("--------------------\n");
+    dump_vector_2d(out_mt,out_wh, out_wh);
+
+    delete [] data;
+    delete [] filter;
+    delete [] out;
+    delete [] out_mt;
+}
+
+int main(){
+    //test_fft();
+    //test_ifft();
+    //test_fft_r2c();
+    //test_ifft_c2r();
+    //test_fft2d_r2c();
+    test_convolve_2d();
 }
