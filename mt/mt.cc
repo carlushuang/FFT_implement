@@ -41,7 +41,8 @@
 #endif
 
 //#define PRE_PAD_DATA
-#define FFTCONV_USE_CONJ
+#define FFTCONV_USE_CONJ // this is a good mode that all omega use the same function, unified_omega_func_f32
+#define FFTCONV_USE_CONJ_NO_ROTATE // this mode, all kernel padding shape is same. we restore output in c2r part
 
 std::tuple<float,float> unified_omega_func_f32(size_t total_n, size_t k){
     float theta = -1*C_2PI*k / total_n;
@@ -898,22 +899,53 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
 
     if(correlation){
 #ifdef FFTCONV_USE_CONJ
+#ifdef FFTCONV_USE_CONJ_NO_ROTATE
+        for(size_t j=0;j<filter_h;j++){
+            for(size_t i=0;i<filter_w;i++){
+                seq_filter[j*seq_pad_w+i] = filter[j*filter_w+i]; // no reverse needed
+            }
+        }
+#else
         /*
         * www.claysturner.com/dsp/timereversal.pdf
         *  corr(a, b) = ifft(fft(a_and_zeros) * conj(fft(b_and_zeros))) [1]
         *  But in DFT, can not pad b_and_zeros with filter. There must be a rotation
         * 
         *            origin             to be correlate (b_and_zeros)
-        *  1d: [0, 1, 2, 3, x, x, x, x] -> [3, x, x, x, x, 0, 1, 2]    x means padding zero
+        *  1d: [0, 1, 2, 3, _, _, _, _] -> [3, _, _, _, _, 0, 1, 2]    _ means padding zero
         * 
-        *  2d: [0, 1, 2, 3, x, x, x, x] -> [f, x, x, x, x, c, d, e]
-        *      [4, 5, 6, 7, x, x, x, x]    [x, x, x, x, x, x, x, x]
-        *      [8, 9, a, b, x, x, x, x]    [x, x, x, x, x, x, x, x]
-        *      [c, d, e, f, x, x, x, x]    [x, x, x, x, x, x, x, x]
-        *      [x, x, x, x, x, x, x, x]    [x, x, x, x, x, x, x, x]
-        *      [x, x, x, x, x, x, x, x]    [3, x, x, x, x, 0, 1, 2]
-        *      [x, x, x, x, x, x, x, x]    [7, x, x, x, x, 4, 5, 6]
-        *      [x, x, x, x, x, x, x, x]    [b, x, x, x, x, 8, 9, a]
+        *                                               rotate right : seq_pad_w-filter_w+1, rotate left: filter_w-1
+        *                                               rotate down  : seq_pad_h-filter_h+1, rotate up  : filter_h-1
+        *  2d: [0, 1, 2, _, _, _, _, _] -> [8, _, _, _, _, _, 6, 7]
+        *      [3, 4, 5, _, _, _, _, _]    [_, _, _, _, _, _, _, _]
+        *      [6, 7, 8, _, _, _, _, _]    [_, _, _, _, _, _, _, _]
+        *      [_, _, _, _, _, _, _, _]    [_, _, _, _, _, _, _, _] filter
+        *      [_, _, _, _, _, _, _, _]    [_, _, _, _, _, _, _, _]
+        *      [_, _, _, _, _, _, _, _]    [_, _, _, _, _, _, _, _]
+        *      [_, _, _, _, _, _, _, _]    [2, _, _, _, _, _, 0, 1]
+        *      [_, _, _, _, _, _, _, _]    [5, _, _, _, _, _, 3, 4]
+        * 
+        *                            correlate 
+        *
+        *  2d: [d, d, d, d, d, d, _, _]    [d, d, d, d, d, d, _, _]
+        *      [d, d, d, d, d, d, _, _]    [d, d, d, d, d, d, _, _]
+        *      [d, d, d, d, d, d, _, _]    [d, d, d, d, d, d, _, _]
+        *      [d, d, d, d, d, d, _, _]    [d, d, d, d, d, d, _, _] data
+        *      [d, d, d, d, d, d, _, _]    [d, d, d, d, d, d, _, _]
+        *      [d, d, d, d, d, d, _, _]    [d, d, d, d, d, d, _, _]
+        *      [_, _, _, _, _, _, _, _]    [_, _, _, _, _, _, _, _]
+        *      [_, _, _, _, _, _, _, _]    [_, _, _, _, _, _, _, _]
+        *
+        *                               ||
+        * 
+        *  2d: [7, 8, 9, a, b, -, -, 6]    [-, -, -, -, -, -, -, -]
+        *      [d, e, f, g, h, -, -, c]    [-, 0, 1, 2, 3, 4, 5, -]
+        *      [j, k, l, m, n, -, -, i]    [-, 6, 7, 8, 9, a, b, -]
+        *      [p, q, r, s, t, -, -, o]    [-, c, d, e, f, g, h, -] out, - means don't care
+        *      [v, w, x, y, z, -, -, u]    [-, i, j, k, l, m, n, -]
+        *      [-, -, -, -, -, -, -, -]    [-, o, p, q, r, s, t, -]
+        *      [-, -, -, -, -, -, -, -]    [-, u, v, w, x, y, z, -]
+        *      [1, 2, 3, 4, 5, -, -, 0]    [-, -, -, -, -, -, -, -]
         */
        for(size_t j=0;j<filter_h;j++){
             for(size_t i=0;i<filter_w;i++){
@@ -922,13 +954,14 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
                 seq_filter[dj*seq_pad_w+di] = filter[j*filter_w+i];
             }
         }
+#endif // FFTCONV_USE_CONJ_NO_ROTATE
 #else
         for(size_t j=0;j<filter_h;j++){
             for(size_t i=0;i<filter_w;i++){
                 seq_filter[j*seq_pad_w+i] = filter[(filter_h-1-j)*filter_w+filter_w-1-i]; // reverse!
             }
         }
-#endif
+#endif // FFTCONV_USE_CONJ
     }else{
         for(size_t j=0;j<filter_h;j++){
             for(size_t i=0;i<filter_w;i++){
@@ -964,7 +997,7 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
 
     // 3: ifft output
     ifft2d_c2r_mt(dst_pad, fft_out, seq_pad_w, seq_pad_h, merge_nyquist_freq);
-    //dump_vector_2d(dst_pad,seq_pad_w,seq_pad_h);
+    // dump_vector_2d(dst_pad,seq_pad_w,seq_pad_h);
 
     // This is the shift value from signal process to ML/AI meaninig.
     // e.g if filter_size=3, pad=2, then singal and ML/AI has the same meaning.
@@ -975,6 +1008,20 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
 #else
     size_t shift_h = filter_h-1-pad_h;
     size_t shift_w = filter_w-1-pad_w;
+#ifdef FFTCONV_USE_CONJ_NO_ROTATE
+    T * dst_pad_rotated = new T[seq_pad_w*seq_pad_h];
+    for(size_t i=0;i<seq_pad_w*seq_pad_h;i++){
+        dst_pad_rotated[i] = dst_pad[i];
+    }
+    for(size_t j=0;j<seq_pad_h;j++){
+        for(size_t i=0;i<seq_pad_w;i++){
+            size_t sj=(seq_pad_h-filter_h+1+j)%seq_pad_h;
+            size_t si=(seq_pad_w-filter_w+1+i)%seq_pad_w;
+            dst_pad[j*seq_pad_w+i] = dst_pad_rotated[sj*seq_pad_w+si];
+        }
+    }
+    delete [] dst_pad_rotated;
+#endif
 #endif
 
     for(size_t j=0;j<dst_h;j++){
@@ -1173,8 +1220,8 @@ void test_fft2d_r2c(){
 }
 void test_convolve_2d(){
     const size_t data_wh=6;
-    const size_t pad_wh=1;
-    const size_t filter_wh=3;
+    const size_t pad_wh=0;
+    const size_t filter_wh=4;
     const size_t out_wh =  data_wh + 2*pad_wh - filter_wh + 1;
 
     float * data = new float[data_wh*data_wh];
