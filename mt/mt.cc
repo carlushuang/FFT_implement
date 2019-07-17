@@ -1189,8 +1189,8 @@ void test_convolve_2d(){
     for(size_t i=0;i<data_wh*data_wh;i++) data[i] = i;
     for(size_t i=0;i<filter_wh*filter_wh;i++) filter[i] = i;
 
-    convolve2d_naive(data, data_wh, data_wh, filter, filter_wh, filter_wh, pad_wh, pad_wh, out, false);
-    convolve2d_fft_mt(data, data_wh, data_wh, filter, filter_wh, filter_wh, pad_wh, pad_wh, out_mt, false);
+    convolve2d_naive(data, data_wh, data_wh, filter, filter_wh, filter_wh, pad_wh, pad_wh, out, true);
+    convolve2d_fft_mt(data, data_wh, data_wh, filter, filter_wh, filter_wh, pad_wh, pad_wh, out_mt, true);
 
     //printf("--------------------\n");
     //dump_vector_2d(out,out_wh, out_wh);

@@ -14,7 +14,7 @@
 /*
 * A,B,C is complex number
 *
-* conj（A*B） = conj(A)*conj(B)
+* conj(A*B) = conj(A)*conj(B)
 * conj(A+B) = conj(A)+conj(B)
 * conj(A)*B = A*conj(B)
 * conj(A*B)*C = conj(A)*conj(B)*C = conj(A)*B*conj(C) = A*conj(B*C)
