@@ -7,6 +7,7 @@
 #include <functional>
 #include <random>
 #include <stdlib.h>
+#include <limits>
 
 #ifdef USE_FFTW
 #include <fftw3.h>
@@ -40,9 +41,10 @@
 #define C_2PI 6.28318530717958647692
 #endif
 
-//#define PRE_PAD_DATA
+#define PRE_PAD_DATA
 #define FFTCONV_USE_CONJ // this is a good mode that all omega use the same function, unified_omega_func_f32
 #define FFTCONV_USE_CONJ_NO_ROTATE // this mode, all kernel padding shape is same. we restore output in c2r part
+#define MERGE_2D_NYQUEST_FREQ
 
 std::tuple<float,float> unified_omega_func_f32(size_t total_n, size_t k){
     float theta = -1*C_2PI*k / total_n;
@@ -64,18 +66,42 @@ void dump_vector_2d(const T * vec, size_t width, size_t height){
     }
 }
 template<typename T>
-int valid_vector(const T* lhs, const T* rhs, size_t len, T delta = (T)0.002){
+int valid_vector(const T* lhs, const T* rhs, size_t len, T delta = (T)0.03){
     int err_cnt = 0;
     for(size_t i = 0;i < len; i++){
         T d = lhs[i]- rhs[i];
 #define ABS(x) ((x)>0?(x):-1*(x))
         d = ABS(d);
         if(d > delta){
-            std::cout<<" diff at "<<i<<", lhs:"<<lhs[i]<<", rhs:"<<rhs[i]<<std::endl;
+            std::cout<<" diff at "<<i<<", lhs:"<<lhs[i]<<", rhs:"<<rhs[i]<<", delta:"<<d<<std::endl;
             err_cnt++;
         }
     }
     return err_cnt;
+}
+template<typename T>
+int valid_vector_nrms(const T* pred, const T* ref, size_t len, double tolerance = (double)1e-6)
+{
+#define RMS_THRESHOLD 1e-6
+#ifndef ABS
+#define ABS(x)      ((x)>0?(x):-1*(x))
+#endif
+#ifndef MAX
+#define MAX(a,b)    ( (a)>(b)?(a):(b) )
+#endif
+    // check MIOpen https://github.com/ROCmSoftwarePlatform/MIOpen/blob/master/test/verify.hpp#L167
+    // normalized root mean squared error.
+    double v, max, nrms;
+    v = 0;
+    max = std::numeric_limits<double>::min();
+    for(size_t i=0;i<len;i++){
+        double d = ref[i]-pred[i];
+        double m2 = MAX(ABS(ref[i]),ABS(pred[i]));
+        v += d*d;
+        max = MAX(max,m2);
+    }
+    nrms = sqrt(v)/(sqrt(len)*max);
+    return (nrms<RMS_THRESHOLD)?0:1;
 }
 
 template<typename T>
@@ -86,7 +112,7 @@ template<typename T>
 void rand_vec(T *  seq, size_t len){
     static std::random_device rd;   // seed
     static std::mt19937 mt(rd());
-    static std::uniform_real_distribution<T> dist(-2.0, 2.0);
+    static std::uniform_real_distribution<T> dist(0.0000001f, 1.0);
     for(size_t i=0;i<len;i++) seq[i] =  dist(mt);
 }
 // np.fft.fft(...)
@@ -452,19 +478,25 @@ void fft_r2c_mt(const T* t_seq, T * f_seq, size_t length, bool merge_nyquist_fre
 * f_seq is complex, if merge_nyquist_freq == true: (seq_h/2)*(2*seq_w) value, (seq_h/2)*seq_w complex value.
 *                   if merge_nyquist_freq == false: (seq_h/2+1)*(2*seq_w) value, (seq_h/2+1)*seq_w complex value.
 * indeed, 2d r2c merge_nyquist_freq can't be true, otherwise original information will be corrupt
+* But we can merge it while do horizontal fft
 */
 template<typename T>
-void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h, bool merge_nyquist_freq=false){
-    assert(!merge_nyquist_freq);
+void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h){
+    bool h_merge_nyquist_freq=
+#ifdef MERGE_2D_NYQUEST_FREQ
+        true;
+#else
+        false;
+#endif
     // vertical
     T * vt = new T[seq_h];
-    T * vf = new T[merge_nyquist_freq?seq_h:(seq_h+2)];
-    size_t v_len = merge_nyquist_freq?seq_h:(seq_h+2);
+    T * vf = new T[h_merge_nyquist_freq?seq_h:(seq_h+2)];
+    size_t v_len = h_merge_nyquist_freq?seq_h:(seq_h+2);
     for(size_t w=0;w<seq_w;w++){
         for(size_t h=0;h<seq_h;h++){
             vt[h] = t_seq[h*seq_w+w];
         }
-        fft_r2c_mt(vt, vf, seq_h, merge_nyquist_freq);
+        fft_r2c_mt(vt, vf, seq_h, h_merge_nyquist_freq);
 
         for(size_t h=0;h<v_len/2;h++){
             f_seq[h*2*seq_w+2*w] = vf[2*h];
@@ -513,6 +545,39 @@ void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h, bool me
 
             f_seq[h*2*seq_w+seq_w+2*w] = h_even[2*w]-h_odd[2*w]*c+h_odd[2*w+1]*s;
             f_seq[h*2*seq_w+seq_w+2*w+1] = h_even[2*w+1]-h_odd[2*w]*s-h_odd[2*w+1]*c;
+        }
+    }
+    if(h_merge_nyquist_freq){
+        /*   Xa(K) = sigma( 0.5*(R0+R1)+0.5*(I0-I1)*j  )
+        *   Xb(k) = sigma( 0.5*(I0+I1)+0.5*(-R0+R1)*j )
+        *
+        *   R0:real part of k-th, X(k)
+        *   I0:image part of k-th, X(k)
+        *   R1:real part of (N-k)-th, X(N-k)
+        *   I1:image part of (N-k)-th, X(N-k)
+        */
+        f_seq[0] = f_seq[0];
+        f_seq[(seq_h/2)*2*seq_w] = f_seq[1];
+        f_seq[1] = 0;
+        f_seq[(seq_h/2)*2*seq_w+1] = 0;
+
+        for(size_t w=1;w<seq_w/2;w++){
+            float r0,r1,i0,i1;
+            r0 = f_seq[2*w];
+            i0 = f_seq[2*w+1];
+            r1 = f_seq[2*(seq_w-w)];
+            i1 = f_seq[2*(seq_w-w)+1];
+            // row 0
+            f_seq[2*w] = 0.5*(r0+r1);
+            f_seq[2*w+1] = 0.5*(i0-i1);
+            f_seq[2*(seq_w-w)] = 0.5*(r1+r0);
+            f_seq[2*(seq_w-w)+1] = 0.5*(i1-i0);
+
+            // row seq_h/2+1
+            f_seq[(seq_h/2)*2*seq_w+2*w] = 0.5*(i0+i1);
+            f_seq[(seq_h/2)*2*seq_w+2*w+1] = 0.5*(-r0+r1);
+            f_seq[(seq_h/2)*2*seq_w+2*(seq_w-w)] = 0.5*(i1+i0);
+            f_seq[(seq_h/2)*2*seq_w+2*(seq_w-w)+1] = 0.5*(-r1+r0);
         }
     }
     delete [] h_even;
@@ -869,8 +934,9 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
     // Otherwise, the output is shifted.
     size_t seq_pad_h = (size_t)std::pow(2, std::ceil(std::log2(data_h + filter_h-1)));
     size_t seq_pad_w = (size_t)std::pow(2, std::ceil(std::log2(data_w + filter_w-1)));
-    bool merge_nyquist_freq = false;    // indeed, this can't be true
-    size_t fft_h = merge_nyquist_freq?(seq_pad_h/2):(seq_pad_h/2+1);
+    //bool merge_nyquist_freq = false;    // indeed, this can't be true
+    //size_t fft_h = merge_nyquist_freq?(seq_pad_h/2):(seq_pad_h/2+1);
+    size_t fft_h = seq_pad_h/2+1;
     size_t fft_w = 2*seq_pad_w;
 
     T * seq_data    = new T[seq_pad_h*seq_pad_w];
@@ -971,8 +1037,8 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
     }
 
     // 1: fft data, fft filter
-    fft2d_r2c_mt(seq_data, fft_data, seq_pad_w, seq_pad_h, merge_nyquist_freq);
-    fft2d_r2c_mt(seq_filter, fft_filter, seq_pad_w, seq_pad_h, merge_nyquist_freq);
+    fft2d_r2c_mt(seq_data, fft_data, seq_pad_w, seq_pad_h);
+    fft2d_r2c_mt(seq_filter, fft_filter, seq_pad_w, seq_pad_h);
     //dump_vector_2d(fft_data, fft_w, fft_h);
 
     // 2: element wise multiply
@@ -996,7 +1062,7 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
 
 
     // 3: ifft output
-    ifft2d_c2r_mt(dst_pad, fft_out, seq_pad_w, seq_pad_h, merge_nyquist_freq);
+    ifft2d_c2r_mt(dst_pad, fft_out, seq_pad_w, seq_pad_h);
     // dump_vector_2d(dst_pad,seq_pad_w,seq_pad_h);
 
     // This is the shift value from signal process to ML/AI meaninig.
@@ -1005,9 +1071,31 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
     // PAD HERE! hence the shift is only filter_size-1 from signal process
     size_t shift_h = filter_h-1;
     size_t shift_w = filter_w-1;
+#ifdef FFTCONV_USE_CONJ_NO_ROTATE
+    (void)shift_h;
+    (void)shift_w;
+    for(size_t j=0;j<dst_h;j++){
+        for(size_t i=0;i<dst_w;i++){
+            //size_t sj=(seq_pad_h-filter_h+1+j+shift_h)%seq_pad_h;
+            //size_t si=(seq_pad_w-filter_w+1+i+shift_w)%seq_pad_w;
+            size_t sj=(seq_pad_h+j)%seq_pad_h;
+            size_t si=(seq_pad_w+i)%seq_pad_w;
+            // NOTICE: must do shift to get back what ML/AI needed. see PRE_PAD_DATA to check 2 padding method
+            dst[j*dst_w+i] = dst_pad[sj*seq_pad_w+si];
+        }
+    }
+#else
+    for(size_t j=0;j<dst_h;j++){
+        for(size_t i=0;i<dst_w;i++){
+            // NOTICE: must do shift to get back what ML/AI needed. see PRE_PAD_DATA to check 2 padding method
+            dst[j*dst_w+i] = dst_pad[(j+shift_h)*seq_pad_w+i+shift_w];
+        }
+    }
+#endif // FFTCONV_USE_CONJ_NO_ROTATE
 #else
     size_t shift_h = filter_h-1-pad_h;
     size_t shift_w = filter_w-1-pad_w;
+#if 0
 #ifdef FFTCONV_USE_CONJ_NO_ROTATE
     T * dst_pad_rotated = new T[seq_pad_w*seq_pad_h];
     for(size_t i=0;i<seq_pad_w*seq_pad_h;i++){
@@ -1022,14 +1110,37 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
     }
     delete [] dst_pad_rotated;
 #endif
-#endif
-
     for(size_t j=0;j<dst_h;j++){
         for(size_t i=0;i<dst_w;i++){
             // NOTICE: must do shift to get back what ML/AI needed. see PRE_PAD_DATA to check 2 padding method
             dst[j*dst_w+i] = dst_pad[(j+shift_h)*seq_pad_w+i+shift_w];
         }
     }
+#endif
+#if 1
+#ifdef FFTCONV_USE_CONJ_NO_ROTATE
+    for(size_t j=0;j<dst_h;j++){
+        for(size_t i=0;i<dst_w;i++){
+            //size_t sj=(seq_pad_h-filter_h+1+j+shift_h)%seq_pad_h;
+            //size_t si=(seq_pad_w-filter_w+1+i+shift_w)%seq_pad_w;
+            size_t sj=(seq_pad_h-pad_h+j)%seq_pad_h;
+            size_t si=(seq_pad_w-pad_w+i)%seq_pad_w;
+            // NOTICE: must do shift to get back what ML/AI needed. see PRE_PAD_DATA to check 2 padding method
+            dst[j*dst_w+i] = dst_pad[sj*seq_pad_w+si];
+        }
+    }
+#else
+    for(size_t j=0;j<dst_h;j++){
+        for(size_t i=0;i<dst_w;i++){
+            // NOTICE: must do shift to get back what ML/AI needed. see PRE_PAD_DATA to check 2 padding method
+            dst[j*dst_w+i] = dst_pad[(j+shift_h)*seq_pad_w+i+shift_w];
+        }
+    }
+#endif // FFTCONV_USE_CONJ_NO_ROTATE
+#endif
+#endif
+
+    
     delete []  seq_data;
     delete []  seq_filter;
     delete []  fft_data;
@@ -1185,7 +1296,7 @@ void test_fft2d_r2c(){
     float ts[FFT_LEN*FFT_LEN];
     //rand_vec(ts,FFT_LEN);
     for(size_t i=0;i<FFT_LEN*FFT_LEN;i++) ts[i] = i;
-    fft2d_r2c_mt(ts, fs, FFT_LEN, FFT_LEN, false);
+    fft2d_r2c_mt(ts, fs, FFT_LEN, FFT_LEN);
     dump_vector_2d(fs, 2*FFT_LEN,  FFT_LEN/2+1 );
     printf("-------------------------\n");
 #ifdef USE_FFTW
@@ -1219,9 +1330,9 @@ void test_fft2d_r2c(){
 #endif
 }
 void test_convolve_2d(){
-    const size_t data_wh=6;
+    const size_t data_wh=14;
     const size_t pad_wh=0;
-    const size_t filter_wh=4;
+    const size_t filter_wh=7;
     const size_t out_wh =  data_wh + 2*pad_wh - filter_wh + 1;
 
     float * data = new float[data_wh*data_wh];
@@ -1244,7 +1355,8 @@ void test_convolve_2d(){
     //printf("--------------------\n");
     //dump_vector_2d(out_mt,out_wh, out_wh);
 
-    int err=valid_vector(out,out_mt,out_wh*out_wh);
+    //int err=valid_vector(out,out_mt,out_wh*out_wh);
+    int err=valid_vector_nrms(out,out_mt,out_wh*out_wh);
     printf("%s\n",err==0?"ok":"fail");
 
     delete [] data;
