@@ -565,10 +565,21 @@ void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h){
         *   R1:real part of (N-k)-th, X(N-k)
         *   I1:image part of (N-k)-th, X(N-k)
         */
+
+        // point 0
         f_seq[0] = f_seq[0];
         f_seq[(seq_h/2)*2*seq_w] = f_seq[1];
         f_seq[1] = 0;
         f_seq[(seq_h/2)*2*seq_w+1] = 0;
+
+        // point N/2
+        float rr,ii;
+        rr = f_seq[seq_w];
+        ii = f_seq[seq_w+1];
+        f_seq[seq_w] = rr;
+        f_seq[seq_w+1] = 0;
+        f_seq[(seq_h/2)*2*seq_w+seq_w] = ii;
+        f_seq[(seq_h/2)*2*seq_w+seq_w+1] = 0;
 
         for(size_t w=1;w<seq_w/2;w++){
             float r0,r1,i0,i1;
@@ -717,6 +728,34 @@ void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h){
 *    =a(l) + b(l)*j
 *    =ar(n)+ai(n)*j + (br(n)+bi(n)*j)*j
 *    =ar(n)-bi(n) + (ai(n)+br(n))*j
+*
+*/
+/* when convolution case, suppose a, b is data, c, d is filter
+* c(n) = cr(n)+ci(n)*j  ifft==>  C(K) = Cr(k)+0*j
+* d(n) = dr(n)+di(n)*j  ifft==>  D(K) = Dr(k)+0*j
+*
+* r(n) = rr(n)+ri(n)*j  ifft==>  R(k) = Cr(k)+Dr(k)*j
+*      = cr(n)-di(n) + (ci(n)+dr(n))*j
+*
+*
+* x(n) = a(n)*conj(c(n)) = ar(n)*cr(n)+ai(n)*ci(n)+(-ar(n)*ci(n)+ai(n)*cr(n))*j
+* y(n) = b(n)*conj(d(n)) = br(n)*dr(n)+bi(n)*di(n)+(-br(n)*di(n)+bi(n)*dr(n))*j
+*
+* X(k) = 1/N*sigma_n( a(n)*conj(c(n))*conj(W_k_n) )
+* Y(k) = 1/N*sigma_n( b(n)*conj(d(n))*conj(W_k_n) )
+*
+* X(k) = 1/N*sigma_n( a(n)*conj(c(n))*conj(W_k_n) )
+*      = 1/N*sigma_n( sigma_l(A(l)*W_l_n) * conj(sigma_l(C(l)*W_l_n)) * conj(W_k_n) )
+*      = 1/N*sigma_n( sigma_l(A(l)*W_l_n) * conj(W_k_n) ) * sigma_n( conj(sigma_l(C(l)*W_l_n)) )
+*      = 1/N*sigma_l( A(l)*sigma_n(W_(k-l)_n)) ) * sigma_n( conj(sigma_l(C(l)*W_l_n)) )
+*      = 1/N*sigma_l( A(l)*N*theta(k-l mod N)  ) * sigma_n( conj(sigma_l(C(l)*W_l_n)) )
+*      = A(k) * sigma_n(conj(sigma_l(C(l)*W_l_n)) )
+*      = A(k) * sigma_n(conj(c(n)))
+*
+* Y(k) = B(k) * sigma_n(conj(d(n)))
+*
+* since sigma_n(conj(c(n))), sigma_n(conj(d(n))), the image part is zero (recall r2c hermitian symmertry)
+* the new X(k)/Y(k) is also real only, hence safe to reuse that in 1d c2r
 *
 */
 
@@ -1061,6 +1100,7 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
     // Otherwise, the output is shifted.
     size_t seq_pad_h = (size_t)std::pow(2, std::ceil(std::log2(data_h + filter_h-1)));
     size_t seq_pad_w = (size_t)std::pow(2, std::ceil(std::log2(data_w + filter_w-1)));
+    //printf("pad to %lux%lu\n",seq_pad_h,seq_pad_w);
     //bool merge_nyquist_freq = false;    // indeed, this can't be true
     //size_t fft_h = merge_nyquist_freq?(seq_pad_h/2):(seq_pad_h/2+1);
     size_t fft_h = seq_pad_h/2+1;
@@ -1166,7 +1206,42 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
     // 1: fft data, fft filter
     fft2d_r2c_mt(seq_data, fft_data, seq_pad_w, seq_pad_h);
     fft2d_r2c_mt(seq_filter, fft_filter, seq_pad_w, seq_pad_h);
+    //printf("----------------------- data T\n");
+    //dump_vector_2d(seq_data, seq_pad_w, seq_pad_h);
+    //printf("----------------------- data F\n");
     //dump_vector_2d(fft_data, fft_w, fft_h);
+    //printf("----------------------- filter F\n");
+    //dump_vector_2d(fft_filter, fft_w, fft_h);
+#if 0
+    {
+        // FFTW
+        fftw_plan p;
+        double * in;
+        fftw_complex * out;
+        in = (double*)fftw_malloc(sizeof(double)*seq_pad_w*seq_pad_h);
+        float * fs = new float[seq_pad_h*2*(seq_pad_w/2+1)];
+        for(size_t i=0;i<seq_pad_w*seq_pad_h;i++){
+            in[i] = seq_data[i];
+        }
+        out = (fftw_complex*)fftw_malloc(sizeof(fftw_complex)*  (seq_pad_h)*(seq_pad_w/2+1)    );
+        // fftw compute ifft unnormalized. need divide by N
+        p=fftw_plan_dft_r2c_2d(seq_pad_w,seq_pad_h, in, out, FFTW_ESTIMATE);
+        fftw_execute(p);
+        for(size_t j=0;j<seq_pad_h;j++){
+            for(size_t i=0;i<(seq_pad_w/2+1);i++){
+               fs[j*2*(seq_pad_w/2+1)+2*i] = out[j*(seq_pad_w/2+1)+i][0];
+               fs[j*2*(seq_pad_w/2+1)+2*i+1] = out[j*(seq_pad_w/2+1)+i][1];
+            }
+        }
+        printf("----------------------- data F fftw\n");
+        dump_vector_2d(fs, 2*(seq_pad_w/2+1), seq_pad_h);
+        printf("--------------------------");
+        fftw_destroy_plan(p);
+        fftw_free(out);
+        fftw_free(in);
+        free(fs);
+    }
+#endif
 
     // 2: element wise multiply
     // if merge_nyquist_freq is true, 2d fft can not get orignal result
@@ -1186,11 +1261,15 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
 
         }
     }
+    //printf("----------------------- out F\n");
+    //dump_vector_2d(fft_out, fft_w, fft_h);
 
 
     // 3: ifft output
     ifft2d_c2r_mt(dst_pad, fft_out, seq_pad_w, seq_pad_h);
-    // dump_vector_2d(dst_pad,seq_pad_w,seq_pad_h);
+    //printf("----------------------------+++++\n");
+    //dump_vector_2d(dst_pad,seq_pad_w,seq_pad_h);
+    //printf("----------------------------+++++\n");
 
     // This is the shift value from signal process to ML/AI meaninig.
     // e.g if filter_size=3, pad=2, then singal and ML/AI has the same meaning.
@@ -1554,39 +1633,62 @@ void test_ifft2d_c2r(){
 #endif
 }
 void test_convolve_2d(){
-    const size_t data_wh=14;
-    const size_t pad_wh=0;
-    const size_t filter_wh=7;
-    const size_t out_wh =  data_wh + 2*pad_wh - filter_wh + 1;
-
-    float * data = new float[data_wh*data_wh];
-    float * filter = new float[filter_wh*filter_wh];
-    float * out = new float[out_wh*out_wh];
-    float * out_mt = new float[out_wh*out_wh];
-
     printf("[%s]\n",__func__);
+    struct {
+        size_t w;
+        size_t p;
+        size_t f;
+    }cfg[] =
+    //   w   p  f
+    {   {14, 3, 7},
+        {3,  0, 1},
+        {8,  1, 3},
+        {31, 1, 3},
+        {19, 2, 5},
+        {19, 0, 5},
+        {55, 3, 7},
+        {81, 4, 11},
+        {9,  2, 3},
+        {10, 0, 4},
+    };
+    
+    for(size_t i=0;i<sizeof(cfg)/sizeof(cfg[0]);i++){
+        size_t data_wh=cfg[i].w;
+        size_t pad_wh=cfg[i].p;
+        size_t filter_wh=cfg[i].f;
 
-    //rand_vec(data,data_wh*data_wh);
-    //rand_vec(filter,filter_wh*filter_wh);
-    for(size_t i=0;i<data_wh*data_wh;i++) data[i] = i;
-    for(size_t i=0;i<filter_wh*filter_wh;i++) filter[i] = i;
+        size_t out_wh =  data_wh + 2*pad_wh - filter_wh + 1;
 
-    convolve2d_naive(data, data_wh, data_wh, filter, filter_wh, filter_wh, pad_wh, pad_wh, out, true);
-    convolve2d_fft_mt(data, data_wh, data_wh, filter, filter_wh, filter_wh, pad_wh, pad_wh, out_mt, true);
+        float * data = new float[data_wh*data_wh];
+        float * filter = new float[filter_wh*filter_wh];
+        float * out = new float[out_wh*out_wh];
+        float * out_mt = new float[out_wh*out_wh];
 
-    //printf("--------------------\n");
-    //dump_vector_2d(out,out_wh, out_wh);
-    //printf("--------------------\n");
-    //dump_vector_2d(out_mt,out_wh, out_wh);
+        printf("size:%-3lu, pad:%-2lu, f:%-2lu, ",data_wh,pad_wh,filter_wh);
 
-    int err=valid_vector(out,out_mt,out_wh*out_wh);
-    //int err=valid_vector_nrms(out,out_mt,out_wh*out_wh);
-    printf("%s\n",err==0?"ok":"fail");
+        rand_vec(data,data_wh*data_wh);
+        rand_vec(filter,filter_wh*filter_wh);
+        //for(size_t i=0;i<data_wh*data_wh;i++) data[i] = i;
+        //for(size_t i=0;i<filter_wh*filter_wh;i++) filter[i] = i;
 
-    delete [] data;
-    delete [] filter;
-    delete [] out;
-    delete [] out_mt;
+        convolve2d_naive(data, data_wh, data_wh, filter, filter_wh, filter_wh, pad_wh, pad_wh, out, true);
+        convolve2d_fft_mt(data, data_wh, data_wh, filter, filter_wh, filter_wh, pad_wh, pad_wh, out_mt, true);
+
+        //printf("-------------------- out\n");
+        //dump_vector_2d(out,out_wh, out_wh);
+        //printf("-------------------- out_mt\n");
+        //dump_vector_2d(out_mt,out_wh, out_wh);
+
+        //int err=valid_vector(out,out_mt,out_wh*out_wh);
+        int err=valid_vector_nrms(out,out_mt,out_wh*out_wh);
+        printf("%s\n",err==0?"ok":"fail");
+
+        delete [] data;
+        delete [] filter;
+        delete [] out;
+        delete [] out_mt;
+    }
+    
 }
 
 int main(){
@@ -1595,6 +1697,6 @@ int main(){
     //test_fft_r2c();
     //test_ifft_c2r();
     //test_fft2d_r2c();
-    test_ifft2d_c2r();
-    //test_convolve_2d();
+    //test_ifft2d_c2r();
+    test_convolve_2d();
 }
