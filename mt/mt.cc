@@ -112,8 +112,15 @@ template<typename T>
 void rand_vec(T *  seq, size_t len){
     static std::random_device rd;   // seed
     static std::mt19937 mt(rd());
-    static std::uniform_real_distribution<T> dist(0.0000001f, 1.0);
+    static std::uniform_real_distribution<T> dist(0.0001f, 1.0);
     for(size_t i=0;i<len;i++) seq[i] =  dist(mt);
+}
+template<typename T>
+T rand_one(){
+    static std::random_device rd;   // seed
+    static std::mt19937 mt(rd());
+    static std::uniform_real_distribution<T> dist(0.0001f, 1.0);
+    return dist(mt);
 }
 // np.fft.fft(...)
 // t_seq, f_seq, have length c_length, which should be 2x longer than 2rc algo
@@ -327,6 +334,8 @@ void ifft_cooley_tukey_r_mt(T * seq, size_t c_length, bool need_final_reverse = 
 *   Gr(0) = Xr(0) + Xi(0)
 *   Gi(0) = Xr(0) - Xi(0)
 *
+*
+*   MERGE_2D_NYQUEST_FREQ
 *   then do vfft, and derive back the real fft result of G(0), G(N/2)
 *   This problem is equivalent to:
 *
@@ -683,7 +692,34 @@ void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h){
 *    Xr(N/4) = 0.5*(sr0-si0) = Gr(N/4)
 *    Xi(N/4) = 0.5*(si1-sr1) = -Gi(N/4)
 *
+*
+* MERGE_2D_NYQUEST_FREQ
+*
+* a(n) = ar(n)+ai(n)*j  ifft==>  A(K) = Ar(k)+0*j
+* b(n) = br(n)+bi(n)*j  ifft==>  B(K) = Br(k)+0*j
+*
+* q(n) = qr(n)+qi(n)*j  ifft==>  Q(k) = Ar(k)+Br(k)*j
+*
+* W=e^(-2*PI/N), W_k_n=e^(-2*k*n*PI/N)
+* W=cos(@)+sin(@)*j, @ = -2*PI/N
+*
+* sigma_n(W_k_n) = sigma_n(conj(W_k_n))= N*theta(k mod N)
+* theta(x) = (x==0)?1:0
+*
+* A(k) = 1/N*sigma_n(a(n)*conj(W_k_n))
+* B(k) = 1/N*sigma_n(b(n)*conj(W_k_n))
+*
+* q(n) = sigma_k( Q(k)*W_k_n ) = sigma_k(
+*    (  1/N*sigma_l(a(l)*conj(W_k_l))  +  1/N*sigma_l(b(l)*conj(W_k_l))*j  )*W_k_n )
+*    =1/N*sigma_l(  a(l)*sigma_k(W_k_(n-l))  ) + 1/N*sigma_l(  b(l)*sigma_k(W_k_(n-l)) )*j
+*    =1/N*sigma_l(  a(l)*N*theta(n-l mod N)  ) + 1/N*sigma_l(  b(l)*N*theta(n-l mod N) )*j
+*
+*    =a(l) + b(l)*j
+*    =ar(n)+ai(n)*j + (br(n)+bi(n)*j)*j
+*    =ar(n)-bi(n) + (ai(n)+br(n))*j
+*
 */
+
 #define C2R_EPILOG(xr,xi,xnr,xni,s,c,sr0,si0,sr1,si1)   \
     do{                                                 \
         sr0=xr+xnr; si0=xr-xnr; sr1=xi+xni; si1=xi-xni; \
@@ -783,15 +819,37 @@ void ifft_c2r_mt(T* t_seq, const T * f_seq, size_t length, bool merge_nyquist_fr
 * indeed, 2d c2r merge_nyquist_freq can't be true, otherwise original information will be corrupt
 */
 template<typename T>
-void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h, bool merge_nyquist_freq=false){
-    assert(!merge_nyquist_freq);
-    size_t v_len = merge_nyquist_freq?seq_h:(seq_h+2);
+void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h){
+    bool h_merge_nyquist_freq = 
+#ifdef MERGE_2D_NYQUEST_FREQ
+        true;
+#else
+        false;
+#endif
+    size_t v_len = h_merge_nyquist_freq?seq_h:(seq_h+2);
     T * seq = new T[v_len*seq_w];
+    float * f_seq_first_row = NULL;
+    if(h_merge_nyquist_freq){
+        f_seq_first_row = new float[2*seq_w];
+        for(size_t w=0;w<seq_w;w++){
+            //   ar(n)+ai(n)*j + (br(n)+bi(n)*j)*j
+            //   ar(n)-bi(n) + (ai(n)+br(n))*j
+            f_seq_first_row[2*w] = f_seq[2*w]-f_seq[(seq_h/2)*2*seq_w+2*w+1 ];
+            f_seq_first_row[2*w+1] = f_seq[2*w+1]+f_seq[(seq_h/2)*2*seq_w+2*w ];
+        }
+    }
+
     // horizontal
 #if 0
     for(size_t h=0;h<v_len/2;h++){
-        for(size_t w=0;w<2*seq_w;w++){
-            seq[h*2*seq_w+w] = f_seq[h*2*seq_w+w];
+        if(h_merge_nyquist_freq && h==0){
+            for(size_t w=0;w<2*seq_w;w++){
+                seq[h*2*seq_w+w] = f_seq_first_row[w];
+            }
+        }else{
+            for(size_t w=0;w<2*seq_w;w++){
+                seq[h*2*seq_w+w] = f_seq[h*2*seq_w+w];
+            }
         }
         ifft_cooley_tukey_r_mt(seq+h*2*seq_w, seq_w, true);
     }
@@ -810,12 +868,23 @@ void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h, bool m
         return std::make_tuple<T,T>((T)cos(theta), (T)sin(theta));
     };
 #endif
+    
     for(size_t h=0;h<v_len/2;h++){
-        for(size_t w=0;w<seq_w/2;w++){
-            h_even[2*w]     = f_seq[h*2*seq_w+4*w+0];
-            h_even[2*w+1]   = f_seq[h*2*seq_w+4*w+1];
-            h_odd[2*w]      = f_seq[h*2*seq_w+4*w+2];
-            h_odd[2*w+1]    = f_seq[h*2*seq_w+4*w+3];
+        if( h_merge_nyquist_freq && h==0){
+            for(size_t w=0;w<seq_w/2;w++){
+                h_even[2*w]     = f_seq_first_row[4*w+0];
+                h_even[2*w+1]   = f_seq_first_row[4*w+1];
+                h_odd[2*w]      = f_seq_first_row[4*w+2];
+                h_odd[2*w+1]    = f_seq_first_row[4*w+3];
+            }
+        }
+        else{
+            for(size_t w=0;w<seq_w/2;w++){
+                h_even[2*w]     = f_seq[h*2*seq_w+4*w+0];
+                h_even[2*w+1]   = f_seq[h*2*seq_w+4*w+1];
+                h_odd[2*w]      = f_seq[h*2*seq_w+4*w+2];
+                h_odd[2*w+1]    = f_seq[h*2*seq_w+4*w+3];
+            }
         }
         ifft_cooley_tukey_r_mt(h_even, seq_w/2, true);
         ifft_cooley_tukey_r_mt(h_odd, seq_w/2, true);
@@ -847,7 +916,15 @@ void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h, bool m
     delete [] h_even;
     delete [] h_odd;
 #endif
-
+    if(h_merge_nyquist_freq){
+        delete [] f_seq_first_row;
+        //for(size_t w=0;w<seq_w/2;w++){
+        //    seq[2*w] = seq[2*w];
+        //    seq[(seq_h/2)*2*seq_w+2*w ] = seq[2*w+1];
+        //    seq[2*w+1] = 0;
+        //    seq[(seq_h/2)*2*seq_w+2*w +1] = 0;
+        //}
+    }
     T * vf = new T[v_len];
     T * vt = new T[seq_h];
     // vertical
@@ -856,7 +933,7 @@ void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h, bool m
             vf[2*h] = seq[h*2*seq_w+2*w];
             vf[2*h+1] = seq[h*2*seq_w+2*w+1];
         }
-        ifft_c2r_mt(vt, vf, seq_h, merge_nyquist_freq);
+        ifft_c2r_mt(vt, vf, seq_h, h_merge_nyquist_freq);
         for(size_t h=0;h<seq_h;h++){
             t_seq[h*seq_w+w] = vt[h];
         }
@@ -864,6 +941,56 @@ void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h, bool m
     delete [] seq;
     delete [] vf;
     delete [] vt;
+}
+
+// t_seq is seq_h * 2*seq_w value, seq_h * seq_2 complex
+// f_seq is seq_h * 2*seq_w value, seq_h * seq_2 complex
+template<typename T>
+void fft2d_naive(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h){
+    // vertical
+    T * v_seq = new T[seq_h*2];
+    for(size_t w=0;w<seq_w;w++){
+        for(size_t h=0;h<seq_h;h++){
+            v_seq[2*h] = t_seq[h*2*seq_w+2*w];
+            v_seq[2*h+1] = t_seq[h*2*seq_w+2*w+1];
+        }
+        fft_cooley_tukey_r_mt(v_seq, seq_h);
+        for(size_t h=0;h<seq_h;h++){
+            f_seq[h*2*seq_w+2*w] = v_seq[2*h];
+            f_seq[h*2*seq_w+2*w+1] = v_seq[2*h+1];
+        }
+    }
+    // horizontal
+    for(size_t h=0;h<seq_h;h++){
+        fft_cooley_tukey_r_mt(f_seq+h*2*seq_w,seq_w);
+    }
+    delete [] v_seq;
+}
+template<typename T>
+void ifft2d_naive(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h){
+    // horizontal
+    for(size_t h=0;h<seq_h;h++){
+        for(size_t w=0;w<seq_w;w++){
+            t_seq[h*2*seq_w+2*w] = f_seq[h*2*seq_w+2*w];
+            t_seq[h*2*seq_w+2*w+1] = f_seq[h*2*seq_w+2*w+1];
+        }
+        ifft_cooley_tukey_r_mt(t_seq+h*2*seq_w,seq_w);
+    }
+
+    // vertical
+    T * v_seq = new T[seq_h*2];
+    for(size_t w=0;w<seq_w;w++){
+        for(size_t h=0;h<seq_h;h++){
+            v_seq[2*h] = t_seq[h*2*seq_w+2*w];
+            v_seq[2*h+1] = t_seq[h*2*seq_w+2*w+1];
+        }
+        ifft_cooley_tukey_r_mt(v_seq, seq_h);
+        for(size_t h=0;h<seq_h;h++){
+            t_seq[h*2*seq_w+2*w] = v_seq[2*h];
+            t_seq[h*2*seq_w+2*w+1] = v_seq[2*h+1];
+        }
+    }
+    delete [] v_seq;
 }
 
 // this is ML/AI convolution, not that in signal process.
@@ -1228,6 +1355,7 @@ void test_fft_r2c(){
 }
 void test_ifft_c2r(){
     printf("[%s]\n",__func__);
+    const bool merg_ny = true;
     float ts[FFT_LEN];
     float ts2[2*FFT_LEN];
     float fs[FFT_LEN+2];
@@ -1235,7 +1363,9 @@ void test_ifft_c2r(){
     rand_vec(fs,FFT_LEN+2);
     //for(size_t ii=0;ii<(FFT_LEN+2);ii++) fs[ii] = ii+1;
     //fs[1]=fs[FFT_LEN+1]=0;
-    ifft_c2r_mt(ts,fs,FFT_LEN);
+    if(merg_ny)
+        fs[1] = fs[FFT_LEN];
+    ifft_c2r_mt(ts,fs,FFT_LEN,merg_ny);
 #ifdef USE_FFTW
     (void)fs2;
     {
@@ -1295,7 +1425,7 @@ void test_fft2d_r2c(){
     float fs2[(FFT_LEN/2+1)*(2*FFT_LEN)];
     float ts[FFT_LEN*FFT_LEN];
     //rand_vec(ts,FFT_LEN);
-    for(size_t i=0;i<FFT_LEN*FFT_LEN;i++) ts[i] = i;
+    for(size_t i=0;i<FFT_LEN*FFT_LEN;i++) ts[i] = 2*i+i*i*(i<5?0.2:(i<10?0.1:0.04));
     fft2d_r2c_mt(ts, fs, FFT_LEN, FFT_LEN);
     dump_vector_2d(fs, 2*FFT_LEN,  FFT_LEN/2+1 );
     printf("-------------------------\n");
@@ -1321,6 +1451,100 @@ void test_fft2d_r2c(){
             }
         }
         dump_vector_2d(fs2, 2*(FFT_LEN/2+1), FFT_LEN);
+        fftw_destroy_plan(p);
+        fftw_free(out);
+        fftw_free(in);
+    }
+#else
+    printf("... not implemented reference\n");
+#endif
+    {
+        printf("------------------------- 2d not r2c\n");
+        float ts_naive[FFT_LEN*2*FFT_LEN];
+        for(size_t j=0;j<FFT_LEN;j++){
+            for(size_t i=0;i<FFT_LEN;i++){
+                ts_naive[j*2*FFT_LEN+2*i] = ts[j*FFT_LEN+i];
+                ts_naive[j*2*FFT_LEN+2*i+1] = 0;
+            }
+        }
+        float fs_naive[FFT_LEN*2*FFT_LEN];
+        fft2d_naive(ts_naive, fs_naive, FFT_LEN, FFT_LEN);
+        dump_vector_2d(fs_naive, 2*FFT_LEN, FFT_LEN);
+    }
+}
+void test_ifft2d_c2r(){
+    printf("[%s]\n",__func__);
+    //bool merge_nyquist_freq=false;
+    float fs[(FFT_LEN/2+1)*(2*FFT_LEN)];
+    float fs2[(FFT_LEN/2+1)*(2*FFT_LEN)];
+    float ts[FFT_LEN*FFT_LEN];
+    float ts2[FFT_LEN*FFT_LEN];
+    //rand_vec(ts,FFT_LEN);
+    //for(size_t i=0;i<(FFT_LEN/2+1)*(2*FFT_LEN);i++) fs[i] = 2*i+i*i*(i<5?0.2:(i<10?0.1:0.04));
+    {
+        // it's hard to generate symmetric 2s sequency, so I use fft
+        float ts_naive[FFT_LEN*2*FFT_LEN];
+        for(size_t j=0;j<FFT_LEN;j++){
+            for(size_t i=0;i<FFT_LEN;i++){
+                //ts_naive[j*2*FFT_LEN+2*i] = 2*j+1+i*i*(i<5?0.5:(i<10?0.8:0.2));
+                ts_naive[j*2*FFT_LEN+2*i] = rand_one<float>();
+                ts_naive[j*2*FFT_LEN+2*i+1] = 0;
+            }
+        }
+        float fs_naive[FFT_LEN*2*FFT_LEN];
+        fft2d_naive(ts_naive, fs_naive, FFT_LEN, FFT_LEN);
+        printf("------------------------- fft-ed value:\n");
+        dump_vector_2d(fs_naive, 2*FFT_LEN, FFT_LEN);
+        
+
+        //
+        for(size_t j=0;j<FFT_LEN/2+1;j++){
+            for(size_t i=0;i<FFT_LEN;i++){
+                fs[j*2*FFT_LEN+2*i] =  fs_naive[j*2*FFT_LEN+2*i];
+                fs[j*2*FFT_LEN+2*i+1] =  fs_naive[j*2*FFT_LEN+2*i+1];
+            }
+        }
+
+        for(size_t j=0;j<FFT_LEN;j++){
+            for(size_t i=0;i<(FFT_LEN/2+1);i++){
+                fs2[j*2*(FFT_LEN/2+1)+2*i] =  fs_naive[j*2*FFT_LEN+2*i];
+                fs2[j*2*(FFT_LEN/2+1)+2*i+1] =  fs_naive[j*2*FFT_LEN+2*i+1];
+            }
+        }
+
+        ifft2d_naive(ts_naive, fs_naive, FFT_LEN, FFT_LEN);
+        printf("------------------------- ifft naive:\n");
+        dump_vector_2d(ts_naive, 2*FFT_LEN, FFT_LEN);
+        
+    }
+    ifft2d_c2r_mt(ts, fs, FFT_LEN, FFT_LEN);
+    printf("------------------------- ifft c2r mt:\n");
+    dump_vector_2d(ts, FFT_LEN,  FFT_LEN );
+    
+#ifdef USE_FFTW
+    {
+        //http://www.fftw.org/fftw3_doc/Multi_002dDimensional-DFTs-of-Real-Data.html
+        // fftw c2r 2d is first hfft, then vfft, different from us.
+        fftw_plan p;
+        fftw_complex * in;
+        double * out;
+        in = (fftw_complex*)fftw_malloc(sizeof(fftw_complex)*(FFT_LEN/2+1)*FFT_LEN);
+        for(size_t j=0;j<FFT_LEN;j++){
+            for(size_t i=0;i<(FFT_LEN/2+1);i++){
+                in[j*(FFT_LEN/2+1)+i][0] = fs2[j*2*(FFT_LEN/2+1)+2*i];
+                in[j*(FFT_LEN/2+1)+i][1] = fs2[j*2*(FFT_LEN/2+1)+2*i+1];
+            }
+        }
+        out = (double*)fftw_malloc(sizeof(double)* FFT_LEN*FFT_LEN  );
+        // fftw compute ifft unnormalized. need divide by N
+        p=fftw_plan_dft_c2r_2d(FFT_LEN,FFT_LEN, in, out, FFTW_ESTIMATE);
+        fftw_execute(p);
+
+        for(size_t i=0;i<FFT_LEN*FFT_LEN;i++){
+            ts2[i] = out[i]/(FFT_LEN*FFT_LEN);
+        }
+        printf("------------------------- ifft c2r fftw:\n");
+        dump_vector_2d(ts2, FFT_LEN, FFT_LEN);
         fftw_destroy_plan(p);
         fftw_free(out);
         fftw_free(in);
@@ -1355,8 +1579,8 @@ void test_convolve_2d(){
     //printf("--------------------\n");
     //dump_vector_2d(out_mt,out_wh, out_wh);
 
-    //int err=valid_vector(out,out_mt,out_wh*out_wh);
-    int err=valid_vector_nrms(out,out_mt,out_wh*out_wh);
+    int err=valid_vector(out,out_mt,out_wh*out_wh);
+    //int err=valid_vector_nrms(out,out_mt,out_wh*out_wh);
     printf("%s\n",err==0?"ok":"fail");
 
     delete [] data;
@@ -1371,5 +1595,6 @@ int main(){
     //test_fft_r2c();
     //test_ifft_c2r();
     //test_fft2d_r2c();
-    test_convolve_2d();
+    test_ifft2d_c2r();
+    //test_convolve_2d();
 }
