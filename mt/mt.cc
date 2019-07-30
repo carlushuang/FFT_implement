@@ -573,15 +573,15 @@ void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h){
         f_seq[(seq_h/2)*2*seq_w+1] = 0;
 
         // point N/2
-        float rr,ii;
-        rr = f_seq[seq_w];
-        ii = f_seq[seq_w+1];
-        f_seq[seq_w] = rr;
-        f_seq[seq_w+1] = 0;
-        f_seq[(seq_h/2)*2*seq_w+seq_w] = ii;
-        f_seq[(seq_h/2)*2*seq_w+seq_w+1] = 0;
+        //float rr,ii;
+        //rr = f_seq[seq_w];
+        //ii = f_seq[seq_w+1];
+        //f_seq[seq_w] = rr;
+        //f_seq[seq_w+1] = 0;
+        //f_seq[(seq_h/2)*2*seq_w+seq_w] = ii;
+        //f_seq[(seq_h/2)*2*seq_w+seq_w+1] = 0;
 
-        for(size_t w=1;w<seq_w/2;w++){
+        for(size_t w=1;w<=seq_w/2;w++){
             float r0,r1,i0,i1;
             r0 = f_seq[2*w];
             i0 = f_seq[2*w+1];
@@ -1284,8 +1284,10 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
         for(size_t i=0;i<dst_w;i++){
             //size_t sj=(seq_pad_h-filter_h+1+j+shift_h)%seq_pad_h;
             //size_t si=(seq_pad_w-filter_w+1+i+shift_w)%seq_pad_w;
-            size_t sj=(seq_pad_h+j)%seq_pad_h;
-            size_t si=(seq_pad_w+i)%seq_pad_w;
+            //size_t sj=(seq_pad_h+j)%seq_pad_h;
+            //size_t si=(seq_pad_w+i)%seq_pad_w;
+            size_t sj = j;
+            size_t si = i;
             // NOTICE: must do shift to get back what ML/AI needed. see PRE_PAD_DATA to check 2 padding method
             dst[j*dst_w+i] = dst_pad[sj*seq_pad_w+si];
         }
