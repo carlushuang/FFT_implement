@@ -44,7 +44,12 @@
 #define PRE_PAD_DATA
 #define FFTCONV_USE_CONJ // this is a good mode that all omega use the same function, unified_omega_func_f32
 #define FFTCONV_USE_CONJ_NO_ROTATE // this mode, all kernel padding shape is same. we restore output in c2r part
+//#define FFTCONV_USE_CONJ_A  // same as FFTCONV_USE_CONJ, but notice, time reverse is fft shift
 #define MERGE_2D_NYQUEST_FREQ
+
+#if defined(FFTCONV_USE_CONJ) && defined(FFTCONV_USE_CONJ_A)
+#   error "can't both conj and conj_a mode"
+#endif
 
 std::tuple<float,float> unified_omega_func_f32(size_t total_n, size_t k){
     float theta = -1*C_2PI*k / total_n;
@@ -206,7 +211,7 @@ void _fft_cooley_tukey_r_mt(T * seq, size_t c_length, bool is_inverse_fft, bool 
     assert( ( (c_length & (c_length - 1)) == 0 ) && "current only length power of 2");
 
     std::function<std::tuple<T,T>(size_t,size_t)> omega_func;
-#ifdef FFTCONV_USE_CONJ
+#if defined(FFTCONV_USE_CONJ) || defined(FFTCONV_USE_CONJ_A)
     omega_func = [](size_t total_n, size_t k){
             T theta = -1*C_2PI*k / total_n;
             return std::make_tuple<T,T>((T)cos(theta), (T)sin(theta)); };
@@ -240,7 +245,7 @@ void _fft_cooley_tukey_r_mt(T * seq, size_t c_length, bool is_inverse_fft, bool 
                 T ar,ai,br,bi,tr,ti;
                 LD_C(seq,g*group_len+s,ar,ai);
                 LD_C(seq,g*group_len+s+stride,br,bi);
-#ifdef FFTCONV_USE_CONJ
+#if defined(FFTCONV_USE_CONJ) || defined(FFTCONV_USE_CONJ_A)
                 if(is_inverse_fft)
                     IBTFL_C(ar,ai,br,bi,omr,omi,tr,ti);
                 else
@@ -671,7 +676,7 @@ void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h){
 *    Xr(N/4) = Gr(N/4)
 *    Xi(N/4) = -1*Gi(N/4)
 *
-*   [w conj case]， theta = -2*PI*k/N
+*   [w conj case], theta = -2*PI*k/N
 *   IAr(k) = 0.5*(1.0+sin(-2*PI*k/N))
 *   IAi(k) = 0.5*(1*cos(-2*PI*k/N))
 *   IBr(k) = 0.5*(1-sin(-2*PI*k/N))
@@ -790,7 +795,7 @@ void ifft_c2r_mt(T* t_seq, const T * f_seq, size_t length, bool merge_nyquist_fr
     if(length == 1) return;
     assert( ((length & (length - 1)) == 0 ) && "current only length power of 2");
 
-#ifdef FFTCONV_USE_CONJ
+#if defined(FFTCONV_USE_CONJ) || defined(FFTCONV_USE_CONJ_A)
     auto omega_func = [](size_t total_n, size_t k){
         T theta = -1*C_2PI*k / total_n;
         return std::make_tuple<T,T>((T)cos(theta), (T)sin(theta));
@@ -810,7 +815,7 @@ void ifft_c2r_mt(T* t_seq, const T * f_seq, size_t length, bool merge_nyquist_fr
 
     if(length == 2) return;
 
-#ifdef FFTCONV_USE_CONJ
+#if defined(FFTCONV_USE_CONJ) || defined(FFTCONV_USE_CONJ_A)
     if(!merge_nyquist_freq){
         t_seq[0] = 0.5*(f_seq[0]+f_seq[length]);
         t_seq[1] = 0.5*(f_seq[0]-f_seq[length]);
@@ -837,7 +842,7 @@ void ifft_c2r_mt(T* t_seq, const T * f_seq, size_t length, bool merge_nyquist_fr
 
         LD_C(f_seq,i,xr,xi);
         LD_C(f_seq,length/2-i,xnr,xni);
-#ifdef FFTCONV_USE_CONJ
+#if defined(FFTCONV_USE_CONJ) || defined(FFTCONV_USE_CONJ_A)
         IC2R_EPILOG(xr,xi,xnr,xni,s,c,sr0,si0,sr1,si1);
 #else
         C2R_EPILOG(xr,xi,xnr,xni,s,c,sr0,si0,sr1,si1);
@@ -896,7 +901,7 @@ void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h){
 #if 1
     T * h_even = new T[seq_w];
     T * h_odd  = new T[seq_w];
-#ifdef FFTCONV_USE_CONJ
+#if defined(FFTCONV_USE_CONJ) || defined(FFTCONV_USE_CONJ_A)
     auto omega_func = [](size_t total_n, size_t k){
         T theta = -1*C_2PI*k / total_n;
         return std::make_tuple<T,T>((T)cos(theta), (T)sin(theta));
@@ -931,7 +936,7 @@ void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h){
         for(size_t w=0;w<seq_w/2;w++){
             T c,s;
             std::tie(c,s) = omega_func(seq_w, w);
-#ifdef FFTCONV_USE_CONJ
+#if defined(FFTCONV_USE_CONJ) || defined(FFTCONV_USE_CONJ_A)
             seq[h*2*seq_w+2*w] = (h_even[2*w]+h_odd[2*w]*c+h_odd[2*w+1]*s)/2;
             seq[h*2*seq_w+2*w+1] = (h_even[2*w+1]-h_odd[2*w]*s+h_odd[2*w+1]*c)/2;
             seq[h*2*seq_w+seq_w+2*w] = (h_even[2*w]-h_odd[2*w]*c-h_odd[2*w+1]*s)/2;
@@ -1131,14 +1136,14 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
 
 
     if(correlation){
-#ifdef FFTCONV_USE_CONJ
-#ifdef FFTCONV_USE_CONJ_NO_ROTATE
+#if defined(FFTCONV_USE_CONJ) || defined(FFTCONV_USE_CONJ_A)
+#   ifdef FFTCONV_USE_CONJ_NO_ROTATE
         for(size_t j=0;j<filter_h;j++){
             for(size_t i=0;i<filter_w;i++){
                 seq_filter[j*seq_pad_w+i] = filter[j*filter_w+i]; // no reverse needed
             }
         }
-#else
+#   else
         /*
         * www.claysturner.com/dsp/timereversal.pdf
         *  corr(a, b) = ifft(fft(a_and_zeros) * conj(fft(b_and_zeros))) [1]
@@ -1187,7 +1192,7 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
                 seq_filter[dj*seq_pad_w+di] = filter[j*filter_w+i];
             }
         }
-#endif // FFTCONV_USE_CONJ_NO_ROTATE
+#   endif // FFTCONV_USE_CONJ_NO_ROTATE
 #else
         for(size_t j=0;j<filter_h;j++){
             for(size_t i=0;i<filter_w;i++){
@@ -1253,6 +1258,12 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
                 fft_out[j*fft_w+2*i]   = fft_data[j*fft_w+2*i]*fft_filter[j*fft_w+2*i] + fft_data[j*fft_w+2*i+1]*fft_filter[j*fft_w+2*i+1];
                 fft_out[j*fft_w+2*i+1] = -1*fft_data[j*fft_w+2*i]*fft_filter[j*fft_w+2*i+1] + fft_data[j*fft_w+2*i+1]*fft_filter[j*fft_w+2*i];
             }else
+#elif defined(FFTCONV_USE_CONJ_A)
+            if(correlation){
+                // conj(data)*filter-> (dr-di*i) * (fr+fi*i) -> dr*fr+di*fi+(dr*fi-di*fr)*i
+                fft_out[j*fft_w+2*i]   = fft_data[j*fft_w+2*i]*fft_filter[j*fft_w+2*i] + fft_data[j*fft_w+2*i+1]*fft_filter[j*fft_w+2*i+1];
+                fft_out[j*fft_w+2*i+1] = fft_data[j*fft_w+2*i]*fft_filter[j*fft_w+2*i+1] - fft_data[j*fft_w+2*i+1]*fft_filter[j*fft_w+2*i];
+            }else
 #endif
             {
             fft_out[j*fft_w+2*i]   = fft_data[j*fft_w+2*i]*fft_filter[j*fft_w+2*i] - fft_data[j*fft_w+2*i+1]*fft_filter[j*fft_w+2*i+1];
@@ -1277,7 +1288,8 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
     // PAD HERE! hence the shift is only filter_size-1 from signal process
     size_t shift_h = filter_h-1;
     size_t shift_w = filter_w-1;
-#ifdef FFTCONV_USE_CONJ_NO_ROTATE
+#ifdef FFTCONV_USE_CONJ
+#   ifdef FFTCONV_USE_CONJ_NO_ROTATE
     (void)shift_h;
     (void)shift_w;
     for(size_t j=0;j<dst_h;j++){
@@ -1292,14 +1304,31 @@ void convolve2d_fft_mt(const T* data, size_t data_w, size_t data_h,
             dst[j*dst_w+i] = dst_pad[sj*seq_pad_w+si];
         }
     }
-#else
+#   else
     for(size_t j=0;j<dst_h;j++){
         for(size_t i=0;i<dst_w;i++){
             // NOTICE: must do shift to get back what ML/AI needed. see PRE_PAD_DATA to check 2 padding method
             dst[j*dst_w+i] = dst_pad[(j+shift_h)*seq_pad_w+i+shift_w];
         }
     }
-#endif // FFTCONV_USE_CONJ_NO_ROTATE
+#   endif // FFTCONV_USE_CONJ_NO_ROTATE
+#elif defined(FFTCONV_USE_CONJ_A)
+#   ifdef FFTCONV_USE_CONJ_NO_ROTATE
+    (void)shift_h;
+    (void)shift_w;
+    for(size_t j=0;j<dst_h;j++){
+        for(size_t i=0;i<dst_w;i++){
+            size_t sj = (seq_pad_h-j)%seq_pad_h;
+            size_t si = (seq_pad_w-i)%seq_pad_w;
+            dst[j*dst_w+i] = dst_pad[sj*seq_pad_w+si];
+        }
+    }
+#   else
+    assert(0 && "_____ not implemented _____");
+#   endif
+#else
+    assert(0 && "_____ not implemented _____");
+#endif
 #else
     size_t shift_h = filter_h-1-pad_h;
     size_t shift_w = filter_w-1-pad_w;
@@ -1652,6 +1681,7 @@ void test_convolve_2d(){
         {81, 4, 11},
         {9,  2, 3},
         {10, 0, 4},
+        {32, 0, 32},
     };
     
     for(size_t i=0;i<sizeof(cfg)/sizeof(cfg[0]);i++){
