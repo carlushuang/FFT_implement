@@ -222,8 +222,59 @@ void ifft_c2r_mt(T* t_seq, const T * f_seq, size_t length, bool merge_nyquist_fr
     }
     ifft_cooley_tukey_r_mt(t_seq, length/2, true);
 }
+//#define IFFT_C2R_FIRST
 template<typename T>
 void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h){
+#ifdef IFFT_C2R_FIRST
+    bool h_merge_nyquist_freq = false;  // must false!!
+    size_t v_len = h_merge_nyquist_freq?seq_h:(seq_h+2);
+    T * vf = new T[v_len];
+    T * vt = new T[seq_h];
+    // vertical
+    for(size_t w=0;w<seq_w;w++){
+        for(size_t h=0;h<v_len/2;h++){
+            vf[2*h] = f_seq[h*2*seq_w+2*w];
+            vf[2*h+1] = f_seq[h*2*seq_w+2*w+1];
+        }
+        ifft_c2r_mt(vt, vf, seq_h, h_merge_nyquist_freq);
+        for(size_t h=0;h<seq_h;h++){
+            t_seq[h*seq_w+w] = vt[h];
+        }
+    }
+    delete [] vf;
+    delete [] vt;
+
+    // horizontal
+    T * h_even = new T[seq_w];
+    T * h_odd  = new T[seq_w];
+    auto omega_func = [](size_t total_n, size_t k){
+        T theta = -1*C_2PI*k / total_n;
+        return std::make_tuple<T,T>((T)cos(theta), (T)sin(theta));
+    };
+
+    for(size_t h=0;h<seq_h/2;h++){
+        for(size_t w=0;w<seq_w/2;w++){
+            h_even[2*w]     = t_seq[(h*2+0)*seq_w+2*w+0];
+            h_even[2*w+1]   = t_seq[(h*2+1)*seq_w+2*w+0];
+            h_odd[2*w]      = t_seq[(h*2+0)*seq_w+2*w+1];
+            h_odd[2*w+1]    = t_seq[(h*2+1)*seq_w+2*w+1];
+        }
+
+        ifft_cooley_tukey_r_mt(h_even, seq_w/2, true);
+        ifft_cooley_tukey_r_mt(h_odd, seq_w/2, true);
+
+        for(size_t w=0;w<seq_w/2;w++){
+            T c,s;
+            std::tie(c,s) = omega_func(seq_w, w);
+            t_seq[(h*2+0)*seq_w+2*w] = (h_even[2*w]+h_odd[2*w]*c+h_odd[2*w+1]*s)/2;
+            t_seq[(h*2+1)*seq_w+2*w] = (h_even[2*w+1]-h_odd[2*w]*s+h_odd[2*w+1]*c)/2;
+            t_seq[(h*2+0)*seq_w+2*w+1] = (h_even[2*w]-h_odd[2*w]*c-h_odd[2*w+1]*s)/2;
+            t_seq[(h*2+1)*seq_w+2*w+1] = (h_even[2*w+1]+h_odd[2*w]*s-h_odd[2*w+1]*c)/2;
+        }
+    }
+    delete [] h_even;
+    delete [] h_odd;
+#else
     bool h_merge_nyquist_freq = true;
     size_t v_len = h_merge_nyquist_freq?seq_h:(seq_h+2);
     T * seq = new T[v_len*seq_w];
@@ -295,6 +346,7 @@ void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h){
     delete [] seq;
     delete [] vf;
     delete [] vt;
+#endif
 }
 template<typename T>
 static inline void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h){
@@ -378,8 +430,8 @@ static inline void fft_conv_fwd_nchw(const float *src, const float *filter, floa
     size_t in,ik,ic;
     size_t oh = fft_conv_out_size(h, p, l, r, u);
     size_t ow = fft_conv_out_size(w, q, j, s, v);
-    size_t seq_pad_h = (size_t)std::pow(2, std::ceil(std::log2(h + r-1)));
-    size_t seq_pad_w = (size_t)std::pow(2, std::ceil(std::log2(w + s-1)));
+    size_t seq_pad_h = (size_t)pow(2, ceil(log2(h + r-1)));
+    size_t seq_pad_w = (size_t)pow(2, ceil(log2(w + s-1)));
     size_t fft_h = seq_pad_h/2+1;
     size_t fft_w = 2*seq_pad_w;
 
