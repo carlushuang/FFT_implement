@@ -230,9 +230,12 @@ void fft64(T * seq, bool need_final_reverse = true){
 
     if(need_final_reverse){
 #ifdef RESTORE_PERMUTE
+        // 2nd step
         std::vector<T> tseq; tseq.resize(64*2);
         BREV_TILE_O((tseq.data()),seq,8,8);
         for(size_t i=0;i<8;i++) fft8_shifted(tseq.data()+2*8*i, 1<<(3+1), i, false);
+
+        // reorder, partial brev
         std::vector<size_t> idx_arr;
         bit_reverse_permute(log2(8), idx_arr);
         for(size_t i=0;i<8;i++){
@@ -248,7 +251,7 @@ void fft64(T * seq, bool need_final_reverse = true){
         for(size_t i=0;i<8;i++) fft8_shifted(seq+2*8*i, 1<<(3+1), idx_arr[i], false);
 
         // reorder
-        if(need_final_reverse) bit_reverse_radix2_c(seq, 64);
+        bit_reverse_radix2_c(seq, 64);
 #endif
     }else{
         // 2nd step
@@ -273,13 +276,135 @@ void ifft64(T * seq, bool need_final_reverse = true){
     // restore original order
     RESTORE_ORIGIN(sub_tiles, seq, 8, 8 );
 
-    // 2nd step
-    std::vector<size_t> idx_arr;
-    bit_reverse_permute(log2(8), idx_arr);
-    for(size_t i=0;i<8;i++) ifft8_shifted(seq+2*8*i, 1<<(3+1), idx_arr[i], false);
+    if(need_final_reverse){
+#ifdef RESTORE_PERMUTE
+        // 2nd step
+        std::vector<T> tseq; tseq.resize(64*2);
+        BREV_TILE_O((tseq.data()),seq,8,8);
+        for(size_t i=0;i<8;i++) ifft8_shifted(tseq.data()+2*8*i, 1<<(3+1), i, false);
 
-    // reorder
-    if(need_final_reverse) bit_reverse_radix2_c(seq, 64);
+        // reorder, partial brev
+        std::vector<size_t> idx_arr;
+        bit_reverse_permute(log2(8), idx_arr);
+        for(size_t i=0;i<8;i++){
+            for(size_t j=0;j<8;j++){
+                seq[2*(i*8+j)] = tseq[2*(j*8+idx_arr[i])];
+                seq[2*(i*8+j)+1] = tseq[2*(j*8+idx_arr[i])+1];
+            }
+        }
+#else
+        // 2nd step
+        std::vector<size_t> idx_arr;
+        bit_reverse_permute(log2(8), idx_arr);
+        for(size_t i=0;i<8;i++) ifft8_shifted(seq+2*8*i, 1<<(3+1), idx_arr[i], false);
+
+        // reorder
+        bit_reverse_radix2_c(seq, 64);
+#endif
+    }else{
+        // 2nd step
+        std::vector<size_t> idx_arr;
+        bit_reverse_permute(log2(8), idx_arr);
+        for(size_t i=0;i<8;i++) fft8_shifted(seq+2*8*i, 1<<(3+1), idx_arr[i], false);
+    }
+}
+
+template<typename T>
+void fft128(T * seq, bool need_final_reverse = true){
+    /*
+    * 4+3 division
+    * 8xfft16, follow by 16xfft8
+    */
+    // first step, stride 8, 8 tiles
+    std::vector<std::vector<T>> sub_tiles;
+    STRIDE_N_DIVIDE(sub_tiles, seq, 16, 8 );
+
+    // do first ffts
+    for(size_t i=0;i<8;i++) fft16(sub_tiles[i].data(),false);
+
+    // restore original order
+    RESTORE_ORIGIN(sub_tiles, seq, 16, 8 );
+
+    if(need_final_reverse){
+#ifdef RESTORE_PERMUTE
+        // 2nd step
+        std::vector<T> tseq; tseq.resize(128*2);
+        BREV_TILE_O((tseq.data()),seq,8,16);
+        for(size_t i=0;i<16;i++) fft8_shifted(tseq.data()+2*8*i, 1<<(4+1), i, false);
+
+        // reorder, partial brev
+        std::vector<size_t> idx_arr;
+        bit_reverse_permute(log2(16), idx_arr);
+        for(size_t i=0;i<16;i++){
+            for(size_t j=0;j<8;j++){
+                seq[2*(idx_arr[j]*8+i)]    = tseq[2*(i*8+j)];
+                seq[2*(idx_arr[j]*8+i)+1] = tseq[2*(i*8+j)+1];
+            }
+        }
+#else
+        // 2nd step
+        std::vector<size_t> idx_arr;
+        bit_reverse_permute(log2(16), idx_arr);
+        for(size_t i=0;i<16;i++) fft8_shifted(seq+2*8*i, 1<<(4+1), idx_arr[i], false);
+
+        // reorder
+        bit_reverse_radix2_c(seq, 128);
+#endif
+    }else{
+        // 2nd step
+        std::vector<size_t> idx_arr;
+        bit_reverse_permute(log2(16), idx_arr);
+        for(size_t i=0;i<16;i++) fft8_shifted(seq+2*8*i, 1<<(4+1), idx_arr[i], false);
+    }
+}
+
+template<typename T>
+void ifft128(T * seq, bool need_final_reverse = true){
+    /*
+    * 4+3 division
+    * 8xfft16, follow by 16xfft8
+    */
+    // first step, stride 8, 8 tiles
+    std::vector<std::vector<T>> sub_tiles;
+    STRIDE_N_DIVIDE(sub_tiles, seq, 16, 8 );
+
+    // do first ffts
+    for(size_t i=0;i<8;i++) ifft16(sub_tiles[i].data(),false);
+
+    // restore original order
+    RESTORE_ORIGIN(sub_tiles, seq, 16, 8 );
+
+    if(need_final_reverse){
+#ifdef RESTORE_PERMUTE
+        // 2nd step
+        std::vector<T> tseq; tseq.resize(128*2);
+        BREV_TILE_O((tseq.data()),seq,8,16);
+        for(size_t i=0;i<16;i++) ifft8_shifted(tseq.data()+2*8*i, 1<<(4+1), i, false);
+
+        // reorder, partial brev
+        std::vector<size_t> idx_arr;
+        bit_reverse_permute(log2(16), idx_arr);
+        for(size_t i=0;i<16;i++){
+            for(size_t j=0;j<8;j++){
+                seq[2*(idx_arr[j]*8+i)]    = tseq[2*(i*8+j)];
+                seq[2*(idx_arr[j]*8+i)+1] = tseq[2*(i*8+j)+1];
+            }
+        }
+#else
+        // 2nd step
+        std::vector<size_t> idx_arr;
+        bit_reverse_permute(log2(16), idx_arr);
+        for(size_t i=0;i<16;i++) ifft8_shifted(seq+2*8*i, 1<<(4+1), idx_arr[i], false);
+
+        // reorder
+        bit_reverse_radix2_c(seq, 128);
+#endif
+    }else{
+        // 2nd step
+        std::vector<size_t> idx_arr;
+        bit_reverse_permute(log2(16), idx_arr);
+        for(size_t i=0;i<16;i++) ifft8_shifted(seq+2*8*i, 1<<(4+1), idx_arr[i], false);
+    }
 }
 
 /************************************************************************************/
@@ -313,20 +438,48 @@ int valid_vector(const T* lhs, const T* rhs, size_t len, T delta = (T)0.03){
 void test_fft64(){
     float * seq = (float*)malloc(sizeof(float)*64*2);
     float * seq2 = (float*)malloc(sizeof(float)*64*2);
-    printf("fft64\n");
+    int err;
+
+    printf("fft64:");
     rand_vec(seq,64*2);
     copy_vector(seq,seq2,64*2);
     fft64(seq);
     fft_cooley_tukey_r_mt(seq2,64);
-    valid_vector(seq2,seq,64*2);
-    printf("ifft64\n");
+    err = valid_vector(seq2,seq,64*2);
+    printf("%s\n",err==0?"ok":"fail");
+
+    printf("ifft64:");
     rand_vec(seq,64*2);
     copy_vector(seq,seq2,64*2);
     ifft64(seq);
     ifft_cooley_tukey_r_mt(seq2,64);
-    valid_vector(seq2,seq,64*2);
+    err = valid_vector(seq2,seq,64*2);
+    printf("%s\n",err==0?"ok":"fail");
+}
+
+void test_fft128(){
+    float * seq = (float*)malloc(sizeof(float)*128*2);
+    float * seq2 = (float*)malloc(sizeof(float)*128*2);
+    int err;
+
+    printf("fft128:");
+    rand_vec(seq,128*2);
+    copy_vector(seq,seq2,128*2);
+    fft128(seq);
+    fft_cooley_tukey_r_mt(seq2,128);
+    err=valid_vector(seq2,seq,128*2);
+    printf("%s\n",err==0?"ok":"fail");
+
+    printf("ifft128:");
+    rand_vec(seq,128*2);
+    copy_vector(seq,seq2,128*2);
+    ifft128(seq);
+    ifft_cooley_tukey_r_mt(seq2,128);
+    err=valid_vector(seq2,seq,128*2);
+    printf("%s\n",err==0?"ok":"fail");
 }
 
 int main(){
     test_fft64();
+    test_fft128();
 }
