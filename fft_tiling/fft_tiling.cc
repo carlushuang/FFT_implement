@@ -197,19 +197,20 @@ void ifft32(T * seq, bool need_final_reverse = true){ifft_cooley_tukey_r_mt(seq,
         }                                           \
     }while(0)
 
-#define RESTORE_ORIGIN_PERM(vec2d,pseq,tlen,ntiles) \
+#define BREV_TILE_O(tseq,pseq,tlen,ntiles)          \
     do{                                             \
         std::vector<size_t> perm_idx;               \
         bit_reverse_permute(log2(ntiles), perm_idx);\
         for(size_t i=0;i<ntiles;i++){               \
+            size_t perm_i = perm_idx[i];            \
             for(size_t j=0;j<tlen;j++){             \
-                pseq[2*(i+j*ntiles)] = vec2d[i][2*j];     \
-                pseq[2*(i+j*ntiles)+1] = vec2d[i][2*j+1]; \
+                tseq[2*(i*tlen+j)] = pseq[2*(perm_i*tlen+j)];       \
+                tseq[2*(i*tlen+j)+1] = pseq[2*(perm_i*tlen+j)+1];   \
             }                                       \
         }                                           \
     }while(0)
 
-//#define RESTORE_PERMUTE
+#define RESTORE_PERMUTE 1
 
 template<typename T>
 void fft64(T * seq, bool need_final_reverse = true){
@@ -224,12 +225,23 @@ void fft64(T * seq, bool need_final_reverse = true){
     // do first ffts
     for(size_t i=0;i<8;i++) fft8(sub_tiles[i].data(),false);
 
+    // restore original order
+    RESTORE_ORIGIN(sub_tiles, seq, 8, 8 );
+
     if(need_final_reverse){
 #ifdef RESTORE_PERMUTE
+        std::vector<T> tseq; tseq.resize(64*2);
+        BREV_TILE_O((tseq.data()),seq,8,8);
+        for(size_t i=0;i<8;i++) fft8_shifted(tseq.data()+2*8*i, 1<<(3+1), i, false);
+        std::vector<size_t> idx_arr;
+        bit_reverse_permute(log2(8), idx_arr);
+        for(size_t i=0;i<8;i++){
+            for(size_t j=0;j<8;j++){
+                seq[2*(i*8+j)] = tseq[2*(j*8+idx_arr[i])];
+                seq[2*(i*8+j)+1] = tseq[2*(j*8+idx_arr[i])+1];
+            }
+        }
 #else
-        // restore original order
-        RESTORE_ORIGIN(sub_tiles, seq, 8, 8 );
-
         // 2nd step
         std::vector<size_t> idx_arr;
         bit_reverse_permute(log2(8), idx_arr);
@@ -239,9 +251,6 @@ void fft64(T * seq, bool need_final_reverse = true){
         if(need_final_reverse) bit_reverse_radix2_c(seq, 64);
 #endif
     }else{
-        // restore original order
-        RESTORE_ORIGIN(sub_tiles, seq, 8, 8 );
-
         // 2nd step
         std::vector<size_t> idx_arr;
         bit_reverse_permute(log2(8), idx_arr);
