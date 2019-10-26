@@ -18,6 +18,8 @@
 *
 */
 
+//#define FFT_ROW_R2C
+
 /* use config in mt:
 #define PRE_PAD_DATA
 #define FFTCONV_USE_CONJ // this is a good mode that all omega use the same function, unified_omega_func_f32
@@ -225,6 +227,27 @@ void ifft_c2r_mt(T* t_seq, const T * f_seq, size_t length, bool merge_nyquist_fr
 //#define IFFT_C2R_FIRST
 template<typename T>
 void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h){
+#ifdef FFT_ROW_R2C
+    // horizontal
+    for(size_t h=0;h<seq_h;h++){
+        ifft_c2r_mt(t_seq+h*seq_w, f_seq+h*seq_w, seq_w, false);
+    }
+
+    // vertical
+    T * vt = new T[seq_h*2];
+    for(size_t w=0;w<(seq_w/2);w++){
+        for(size_t h=0;h<seq_h;h++){
+            vt[2*h+0] = t_seq[h*seq_w+2*w+0];
+            vt[2*h+1] = t_seq[h*seq_w+2*w+1];
+        }
+        ifft_cooley_tukey_r_mt(vt, seq_h);
+        for(size_t h=0;h<seq_h;h++){
+            t_seq[h*seq_w+2*w+0] = vt[2*h+0];
+            t_seq[h*seq_w+2*w+1] = vt[2*h+1];
+        }
+    }
+    delete [] vt;
+#else
 #ifdef IFFT_C2R_FIRST
     bool h_merge_nyquist_freq = false;  // must false!!
     size_t v_len = h_merge_nyquist_freq?seq_h:(seq_h+2);
@@ -347,9 +370,33 @@ void ifft2d_c2r_mt(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h){
     delete [] vf;
     delete [] vt;
 #endif
+#endif
 }
 template<typename T>
 static inline void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h){
+#ifdef FFT_ROW_R2C
+    T * t_seq2 = new T[seq_w*seq_h];
+    // vertical
+    T * vt = new T[seq_h*2];
+    for(size_t w=0;w<(seq_w/2);w++){
+        for(size_t h=0;h<seq_h;h++){
+            vt[2*h+0] = t_seq[h*seq_w+2*w+0];
+            vt[2*h+1] = t_seq[h*seq_w+2*w+1];
+        }
+        fft_cooley_tukey_r_mt(vt, seq_h);
+        for(size_t h=0;h<seq_h;h++){
+            t_seq2[h*seq_w+2*w+0] = vt[2*h+0];
+            t_seq2[h*seq_w+2*w+1] = vt[2*h+1];
+        }
+    }
+    delete [] vt;
+
+    // horizontal
+    for(size_t h=0;h<seq_h;h++){
+        fft_r2c_mt(t_seq2+h*seq_w, f_seq+h*seq_w, seq_w, false);
+    }
+    delete [] t_seq2;
+#else
     bool h_merge_nyquist_freq=true;
     // vertical
     T * vt = new T[seq_h];
@@ -423,6 +470,7 @@ static inline void fft2d_r2c_mt(const T* t_seq, T * f_seq, size_t seq_w, size_t 
     }
     delete [] h_even;
     delete [] h_odd;
+#endif
 }
 static inline void fft_conv_fwd_nchw(const float *src, const float *filter, float *dst,
     size_t n, size_t c, size_t h, size_t w, size_t k, size_t r, size_t s, size_t p, size_t q, size_t u, size_t v, size_t l, size_t j)
@@ -432,8 +480,13 @@ static inline void fft_conv_fwd_nchw(const float *src, const float *filter, floa
     size_t ow = fft_conv_out_size(w, q, j, s, v);
     size_t seq_pad_h = (size_t)pow(2, ceil(log2(h + r-1)));
     size_t seq_pad_w = (size_t)pow(2, ceil(log2(w + s-1)));
+#ifdef FFT_ROW_R2C
+    size_t fft_h = seq_pad_h;
+    size_t fft_w = 2*(seq_pad_w/2+1);
+#else
     size_t fft_h = seq_pad_h/2+1;
     size_t fft_w = 2*seq_pad_w;
+#endif
 
     assert((r-1)>=p); assert((s-1)>=q);
     assert(u==1 && v==1 && l==1 && j==1 && "currently only support unit stride/dilation");
