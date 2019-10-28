@@ -59,18 +59,20 @@ Gi(k) = ai*Xr(k)+ar*Xi(k) + bi*Xr(N/2-k)-br*Xi(N/2-k)
 Here why use conj(X(N/2-k))? if X(N/2-k) the following formula will have no answer.
 
 Gr(N/2-k) = x[n]*cos(-2PI*k*n/N) = 
-x[2*n]*cos(-2PI*k*(2*n)/N)+x[2*n+1]*cos(-2PI*k*(2*n+1)/N) = ar*(x[2*n]*cos(-4PI*k*n/N)-x[2*n+1]*sin(-4PI*k*n/N))
-                                                        - ai*(x[2*n]*sin(-4PI*k*n/N)+x[2*n+1]*cos(-4PI*k*n/N))
-                                                        + br*(x[2*n]*cos(-4PI*k*n/N)+x[2*n+1]*sin(-4PI*k*n/N))
-                                                        + bi*(-x[2*n]*sin(-4PI*k*n/N)+x[2*n+1]*cos(-4PI*k*n/N))
+x[2*n]*cos(-2PI*k*(2*n)/N)+x[2*n+1]*cos(-2PI*k*(2*n+1)/N) 
+    = ar*(x[2*n]*cos(-4PI*k*n/N)-x[2*n+1]*sin(-4PI*k*n/N))
+    - ai*(x[2*n]*sin(-4PI*k*n/N)+x[2*n+1]*cos(-4PI*k*n/N))
+    + br*(x[2*n]*cos(-4PI*k*n/N)+x[2*n+1]*sin(-4PI*k*n/N))
+    + bi*(-x[2*n]*sin(-4PI*k*n/N)+x[2*n+1]*cos(-4PI*k*n/N))
 
 Gi(N/2-k) = x[n]*sin(-2PI*k*n/N) = 
-x[2*n]*sin(-2PI*k*(2*n)/N)+x[2*n+1]*sin(-2PI*k*(2*n+1)/N) = ai*(x[2*n]*cos(-4PI*k*n/N)-x[2*n+1]*sin(-4PI*k*n/N))
-                                                        + ar*(x[2*n]*sin(-4PI*k*n/N)+x[2*n+1]*cos(-4PI*k*n/N))
-                                                        + bi*(x[2*n]*cos(-4PI*k*n/N)+x[2*n+1]*sin(-4PI*k*n/N))
-                                                        - br*(-x[2*n]*sin(-4PI*k*n/N)+x[2*n+1]*cos(-4PI*k*n/N))
+x[2*n]*sin(-2PI*k*(2*n)/N)+x[2*n+1]*sin(-2PI*k*(2*n+1)/N) 
+    = ai*(x[2*n]*cos(-4PI*k*n/N)-x[2*n+1]*sin(-4PI*k*n/N))
+    + ar*(x[2*n]*sin(-4PI*k*n/N)+x[2*n+1]*cos(-4PI*k*n/N))
+    + bi*(x[2*n]*cos(-4PI*k*n/N)+x[2*n+1]*sin(-4PI*k*n/N))
+    - br*(-x[2*n]*sin(-4PI*k*n/N)+x[2*n+1]*cos(-4PI*k*n/N))
 
-given sin(x + y) = sin(x)cos(y) + cos(x)sin(y), cos(x + y) = cos(x)cos(y) - sin(x)sin(y)
+given sin(x+y) = sin(x)cos(y)+cos(x)sin(y), cos(x+y) = cos(x)cos(y)-sin(x)sin(y)
       sin(2x) = 2*sin(x)cos(x), cos(2x) = cos(x)^2 - sin(x)^2
 
 let t0=-4PI*k*n/N, t1=-2PI*k/N, c0=cos(t0), s0=sin(t0, c1=cos(t1), s1=sin(t1)
