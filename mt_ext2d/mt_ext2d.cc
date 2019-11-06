@@ -176,9 +176,40 @@ static inline void fft_r2c_ext2d_postproc_vh(const T* t_seq, T * f_seq, size_t l
                         - t_seq[(length-r)*length+1] - t_seq[(length-r)*length]);
     }
 }
+template<typename T>
+static inline void ifft_c2r_ext2d_preproc_vh(T* t_seq, const T * f_seq, size_t length){
+    // f_seq is length in height, length+2 in width float (length/2+1 complex)
+    // t_seq will be length in height, length in width float (length/2 complex)
+
+    // row 0, column 0...N/2-1
+    // GHr(k) = 0.5*((1+st)*XHr - ct*XHi + (1-st)*XHr_hk - ct*XHi_hk)
+    // GHi(k) = 0.5*((1+st)*XHi + ct*XHr - (1-st)*XHi_hk - ct*XHr_hk)
+    for(size_t c=0;c<(length/2);c++){
+        T ct, st;
+        std::tie(ct,st) = omega_func<T>(length, c);
+        t_seq[2*c] = 0.5*((1+st)*f_seq[2*c] - ct*f_seq[2*c+1]
+                + (1-st)*f_seq[2*(length/2-c)] - ct*f_seq[2*(length/2-c)+1]);
+        t_seq[2*c+1] = 0.5*((1+st)*f_seq[2*c+1] + ct*f_seq[2*c] +
+                - (1-st)*f_seq[2*(length/2-c)+1] - ct*f_seq[2*(length/2-c)]);
+    }
+
+    // other row, column 0...N/2-1
+    // GHr(k) = 0.5*((1+st)*XHr - ct*XHi + (1-st)*XHr_vkhk - ct*XHi_vkhk)
+    // GHi(k) = 0.5*((1+st)*XHi + ct*XHr - (1-st)*XHi_vkhk - ct*XHr_vkhk)
+    for(size_t r=1;r<=(length-1);r++){
+        for(size_t c=0;c<(length/2);c++){
+            T ct, st;
+            std::tie(ct,st) = omega_func<T>(length, c);
+            t_seq[r*length+2*c] = 0.5*((1+st)*f_seq[r*(length+2)+2*c] - ct*f_seq[r*(length+2)+2*c+1]
+                    + (1-st)*f_seq[(length-r)*(length+2)+2*(length/2-c)] - ct*f_seq[(length-r)*(length+2)+2*(length/2-c)+1]);
+            t_seq[r*length+2*c+1] = 0.5*((1+st)*f_seq[r*(length+2)+2*c+1] + ct*f_seq[r*(length+2)+2*c] +
+                    - (1-st)*f_seq[(length-r)*(length+2)+2*(length/2-c)+1] - ct*f_seq[(length-r)*(length+2)+2*(length/2-c)]);
+        }
+    }
+}
 
 template<typename T>
-static inline void fft2d_r2c_mt_ext2d(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h){
+static inline void fft2d_r2c_ext2d(const T* t_seq, T * f_seq, size_t seq_w, size_t seq_h){
     assert(seq_w == seq_h && "current only support w==h");
     T * t_seq2 = new T[seq_w*seq_h];
     // vertical
@@ -205,6 +236,34 @@ static inline void fft2d_r2c_mt_ext2d(const T* t_seq, T * f_seq, size_t seq_w, s
 
     delete [] t_seq2;
 }
+
+template<typename T>
+static inline void ifft2d_c2r_ext2d(T* t_seq, const T * f_seq, size_t seq_w, size_t seq_h){
+    assert(seq_w == seq_h && "current only support w==h");
+
+    // preproc
+    ifft_c2r_ext2d_preproc_vh(t_seq, f_seq, seq_w);
+
+    // horizontal
+    for(size_t h=0;h<seq_h;h++)
+        ifft_cooley_tukey_r_mt(t_seq+h*seq_w, seq_w/2);
+
+    // vertical
+    T * vt = new T[seq_h*2];
+    for(size_t w=0;w<(seq_w/2);w++){
+        for(size_t h=0;h<seq_h;h++){
+            vt[2*h+0] = t_seq[h*seq_w+2*w+0];
+            vt[2*h+1] = t_seq[h*seq_w+2*w+1];
+        }
+        ifft_cooley_tukey_r_mt(vt, seq_h);
+        for(size_t h=0;h<seq_h;h++){
+            t_seq[h*seq_w+2*w+0] = vt[2*h+0];
+            t_seq[h*seq_w+2*w+1] = vt[2*h+1];
+        }
+    }
+
+    delete [] vt;
+}
 /**************************************************************************************/
 
 void test_fft2d_ext(){
@@ -217,12 +276,15 @@ void test_fft2d_ext(){
                  0.6999, 0.2525, 0.6243, 0.3331, 0.552 , 0.0183, 0.9592, 0.6264,
                  0.9471, 0.8935, 0.2344, 0.1702, 0.1672, 0.2375, 0.4098, 0.9104};
     float f[8*(8+2)];
-    fft2d_r2c_mt_ext2d(t, f, 8, 8);
+    fft2d_r2c_ext2d(t, f, 8, 8);
 
     dump_vector_2d(t, 8, 8);
     printf("fft---------------------\n");
     dump_vector_2d(f, 10, 8);
 
+    ifft2d_c2r_ext2d(t, f, 8, 8);
+    printf("ifft---------------------\n");
+    dump_vector_2d(t, 8, 8);
 }
 
 int main(){
