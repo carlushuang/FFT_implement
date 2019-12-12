@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <time.h>
-#include "fft_conv.h"
+//#include "fft_conv.h"
+#include "fft_conv_ext2d.h"
 #include "naive_conv.h"
 static int64_t out_size(int64_t in_size, int64_t pad, int64_t dilation, int64_t ksize, int64_t stride)
 {
