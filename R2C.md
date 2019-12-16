@@ -242,4 +242,12 @@ GHi(k) = 0.5*((1+st)*XHi + ct*XHr - (1-st)*XHi_vkhk - ct*XHr_vkhk)
     GHr(k) = 0.5*((1+st)*XHr - ct*XHi + (1-st)*XHr_vkhk - ct*XHi_vkhk)
     GHi(k) = 0.5*((1+st)*XHi + ct*XHr - (1-st)*XHi_vkhk - ct*XHr_vkhk)
 
+3) row 0, column 0:
+    GHr(k) = 0.5*(XHr - XHi + XHr_hk - XHi_hk)
+    GHi(k) = 0.5*(XHi + XHr - XHi_hk - XHr_hk)
+
+4) other, column 0:
+    GHr(k) = 0.5*(XHr - XHi + XHr_vkhk - XHi_vkhk)
+    GHi(k) = 0.5*(XHi + XHr - XHi_vkhk - XHr_vkhk)
+
 ```
