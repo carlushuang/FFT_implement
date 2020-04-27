@@ -14,6 +14,11 @@ using `build.sh` or `build.bat` in each sub directory to build on linux/windows
   One header function for AI/ML convolution implementation using convolution theorem, support nchw/cnhw format. much of code copied from `mt/mt.cc`
 * [fft_tiling/fft_tiling.cc](fft_tiling/fft_tiling.cc)  
   Tiling fft algorithm. Using small size fft to construct big size fft.
+* [py/split-radix.py](py/split-radix.py)
+  srfft
+* [py/pfa.py](py/pfa.py)
+  prime-factor-algorithm
+
 
 # r2c
 [r2c/c2r](http://processors.wiki.ti.com/index.php/Efficient_FFT_Computation_of_Real_Input) is a algorithm for all real input fft,  which can reduce half compute complexity. Check [R2C.md](R2C.md) for detail.
