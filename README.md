@@ -16,7 +16,7 @@ using `build.sh` or `build.bat` in each sub directory to build on linux/windows
   Tiling fft algorithm. Using small size fft to construct big size fft.
 * [py/split-radix.py](py/split-radix.py)  
   srfft
-* [py/split-r.py](py/split-r.py)  
+* [py/radix-r.py](py/radix-r.py)  
   implement radix-2, radix-3, radix-5
 * [py/pfa.py](py/pfa.py)  
   prime-factor-algorithm
