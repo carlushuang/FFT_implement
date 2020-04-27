@@ -1,5 +1,5 @@
 # FFT
-fft, ifft, r2c, c2r, fft_2d_r2c, ifft_2d_c2r, convolve_1d/2d, correlation_1d/2d, tiling fft implementation.
+fft/ifft, r2c/c2r, 2d_r2c/2d_c2r, convolve, correlation, tiling fft, srfft, pfa, radix-2/3/5
 
 using `build.sh` or `build.bat` in each sub directory to build on linux/windows
 
@@ -16,6 +16,8 @@ using `build.sh` or `build.bat` in each sub directory to build on linux/windows
   Tiling fft algorithm. Using small size fft to construct big size fft.
 * [py/split-radix.py](py/split-radix.py)  
   srfft
+* [py/split-r.py](py/split-r.py)  
+  implement radix-2, radix-3, radix-5
 * [py/pfa.py](py/pfa.py)  
   prime-factor-algorithm
 
