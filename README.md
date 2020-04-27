@@ -14,9 +14,9 @@ using `build.sh` or `build.bat` in each sub directory to build on linux/windows
   One header function for AI/ML convolution implementation using convolution theorem, support nchw/cnhw format. much of code copied from `mt/mt.cc`
 * [fft_tiling/fft_tiling.cc](fft_tiling/fft_tiling.cc)  
   Tiling fft algorithm. Using small size fft to construct big size fft.
-* [py/split-radix.py](py/split-radix.py)
+* [py/split-radix.py](py/split-radix.py)  
   srfft
-* [py/pfa.py](py/pfa.py)
+* [py/pfa.py](py/pfa.py)  
   prime-factor-algorithm
 
 
