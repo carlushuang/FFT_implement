@@ -20,7 +20,8 @@ using `build.sh` or `build.bat` in each sub directory to build on linux/windows
   implement radix-2, radix-3, radix-5
 * [py/pfa.py](py/pfa.py)  
   prime-factor-algorithm
-
+* [py/dht.py](py/dht.py)  
+  hartley transform
 
 # r2c
 [r2c/c2r](http://processors.wiki.ti.com/index.php/Efficient_FFT_Computation_of_Real_Input) is a algorithm for all real input fft,  which can reduce half compute complexity. Check [R2C.md](R2C.md) for detail.
