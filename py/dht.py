@@ -78,16 +78,22 @@ def radix_2_fht(vec):
     assert is_pow_of(length, 2), 'length must be power of 2'
     for j in range(length//4):
         c, s = cas_cs(length, j+1)
-        u = vec[length//2 + j + 1]
-        v = vec[length - j - 1]
-        u, v = c*u + s*v, s*u - c*v
-        vec[length//2 + j + 1] = u
-        vec[length - j - 1] = v
+        # u = vec[length//2 + j + 1]
+        # v = vec[length - j - 1]
+        # u, v = c*u + s*v, s*u - c*v
+        # vec[length//2 + j + 1] = u
+        # vec[length - j - 1] = v
+        tmp0 = s * vec[length//2 + j + 1]
+        vec[length//2 + j + 1] *= c
+        vec[length//2 + j + 1] += s * vec[length - j - 1]
+        vec[length - j - 1] = -c * vec[length - j - 1] + tmp0
     for j in range(length//2):
-        u = vec[j]
-        v = vec[length//2 + j]
-        vec[j] = u + v
-        vec[length//2 + j] = u - v
+        # u = vec[j]
+        # v = vec[length//2 + j]
+        # vec[j] = u + v
+        # vec[length//2 + j] = u - v
+        vec[j] =  vec[j] + vec[length//2 + j]
+        vec[length//2 + j] = vec[j] - 2*vec[length//2 + j]
 
 def radix_hft_select(r):
     if r == 2:
@@ -155,7 +161,7 @@ def radix_r_hft(vec, r):
     return fvec
 
 if __name__ == '__main__':
-    n = 32
+    n = 16
     seq = np.random.random(n)
     #seq = np.random.random(n * 2).view(np.complex)
     fhseq = naive_dht_1d(seq)
